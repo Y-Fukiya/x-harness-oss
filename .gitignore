@@ -16,5 +16,6 @@ out/
 packages/mcp/dist/
 .DS_Store
 .worktrees/
+.secure-backups/
 # Human-approved production contracts and media; never commit.
 /production-inputs/
