@@ -1,3 +1,21 @@
 packages:
   - "apps/*"
   - "packages/*"
+
+allowBuilds:
+  core-js: set this to true or false
+  esbuild: set this to true or false
+  workerd: set this to true or false
+
+overrides:
+  "@hono/node-server": "2.0.11"
+  esbuild: "0.28.1"
+  postcss: "8.5.22"
+  sharp: "0.35.3"
+
+onlyBuiltDependencies:
+  - esbuild
+  - workerd
+
+ignoredBuiltDependencies:
+  - core-js
