@@ -47,6 +47,8 @@ decision.
   `61b8b624-e4f4-4aed-b3de-e21859fa86fd`
 - Final disabled Worker version:
   `17278bff-49c6-4d0e-9745-b9156f0b8e99`
+- Production disabled Worker version:
+  `4ec04f90-25a6-4efb-86e7-8e8a4346ae1e`
 - One checksum-bound PNG was written through the immutable R2 staging route
 - The staging-fake adapter read the stored object and completed one fake
   immediate publication
@@ -77,3 +79,6 @@ impossible.
 - Staging D1 emergency stop: active
 - Production D1 emergency stop: active
 - Production R2 retention approval: pending
+- Post-deployment production safety verification: passed with the exact D1
+  stop active and publishing, scheduling, media delivery, and the operation
+  window closed
