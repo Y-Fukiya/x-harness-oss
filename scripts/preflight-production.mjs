@@ -8,6 +8,7 @@ const hermesRuntimeEnabled = process.env.HERMES_RUNTIME_ENABLED === 'true';
 const productionContentIngestEnabled = process.env.PRODUCTION_CONTENT_INGEST_ENABLED === 'true';
 const cloudflareAuthVerified = process.env.CLOUDFLARE_AUTH_VERIFIED === 'true';
 const phase3Enabled = process.env.CUBELIC_PHASE3_ENABLED === 'true';
+const phase3MediaEnabled = process.env.CUBELIC_PHASE3_MEDIA_ENABLED === 'true';
 const requiredSecrets = [
   'API_KEY',
   'HUMAN_APPROVAL_KEY',
@@ -17,7 +18,7 @@ const requiredSecrets = [
 ];
 if (hermesRuntimeEnabled) requiredSecrets.push('HERMES_ACCESS_TOKEN');
 
-for (const name of ['HERMES_RUNTIME_ENABLED', 'PRODUCTION_CONTENT_INGEST_ENABLED', 'PRODUCTION_INPUTS_VALIDATED', 'PRODUCTION_LP_MAPPING_VALIDATED', 'CLOUDFLARE_AUTH_VERIFIED', 'CUBELIC_PHASE3_ENABLED', 'PHASE3_RELEASE_APPROVED', 'STAGING_PHASE3_SMOKE_VERIFIED']) {
+for (const name of ['HERMES_RUNTIME_ENABLED', 'PRODUCTION_CONTENT_INGEST_ENABLED', 'PRODUCTION_INPUTS_VALIDATED', 'PRODUCTION_LP_MAPPING_VALIDATED', 'CLOUDFLARE_AUTH_VERIFIED', 'CUBELIC_PHASE3_ENABLED', 'CUBELIC_PHASE3_MEDIA_ENABLED', 'CUBELIC_PHASE3_MEDIA_SMOKE_MODE', 'PHASE3_RELEASE_APPROVED', 'STAGING_PHASE3_SMOKE_VERIFIED', 'STAGING_PHASE3_MEDIA_SMOKE_VERIFIED', 'MEDIA_RETENTION_POLICY_VERIFIED']) {
   if (process.env[name] && !['true', 'false'].includes(process.env[name])) {
     errors.push(`${name} must be true or false when set`);
   }
@@ -90,6 +91,18 @@ if (phase3Enabled) {
 } else if (process.env.GLOBAL_PUBLISHING_DISABLED !== 'true') {
   errors.push('GLOBAL_PUBLISHING_DISABLED must be explicitly true');
 }
+if (phase3MediaEnabled && !phase3Enabled) {
+  errors.push('CUBELIC_PHASE3_MEDIA_ENABLED requires CUBELIC_PHASE3_ENABLED=true');
+}
+if (phase3MediaEnabled && process.env.STAGING_PHASE3_MEDIA_SMOKE_VERIFIED !== 'true') {
+  errors.push('STAGING_PHASE3_MEDIA_SMOKE_VERIFIED must be true after a media staging and delivery smoke succeeds');
+}
+if (phase3MediaEnabled && process.env.MEDIA_RETENTION_POLICY_VERIFIED !== 'true') {
+  errors.push('MEDIA_RETENTION_POLICY_VERIFIED must be true after the R2 retention and incident-quarantine policy is verified');
+}
+if (process.env.CUBELIC_PHASE3_MEDIA_SMOKE_MODE !== 'false') {
+  errors.push('CUBELIC_PHASE3_MEDIA_SMOKE_MODE must be false for production');
+}
 if (productionContentIngestEnabled && process.env.PRODUCTION_INPUTS_VALIDATED !== 'true') {
   errors.push('PRODUCTION_INPUTS_VALIDATED must be true before production content ingestion is enabled');
 }
@@ -124,11 +137,15 @@ const expectedProductionVars = {
   CREDENTIAL_ENCRYPTION_KEY_VERSION: process.env.CREDENTIAL_ENCRYPTION_KEY_VERSION,
   CUBELIC_PHASE3_ENABLED: phase3Enabled ? 'true' : 'false',
   CUBELIC_PHASE3_DELIVERY_MODE: 'x',
+  CUBELIC_PHASE3_MEDIA_ENABLED: phase3MediaEnabled ? 'true' : 'false',
+  CUBELIC_PHASE3_MEDIA_SMOKE_MODE: 'false',
   CUBELIC_PHASE3_SCHEDULE_POLICIES: phase3Enabled
     ? process.env.CUBELIC_PHASE3_SCHEDULE_POLICIES
     : '',
   PHASE3_RELEASE_APPROVED: phase3Enabled ? 'true' : 'false',
   STAGING_PHASE3_SMOKE_VERIFIED: phase3Enabled ? 'true' : 'false',
+  STAGING_PHASE3_MEDIA_SMOKE_VERIFIED: phase3MediaEnabled ? 'true' : 'false',
+  MEDIA_RETENTION_POLICY_VERIFIED: phase3MediaEnabled ? 'true' : 'false',
   GLOBAL_PUBLISHING_DISABLED: phase3Enabled ? 'false' : 'true',
 };
 for (const [name, expected] of Object.entries(expectedProductionVars)) {

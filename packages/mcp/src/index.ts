@@ -39,6 +39,18 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         result = await client.get(`/api/cubelic/drafts/${encodeURIComponent(input.draftId)}`);
         break;
       }
+      case 'cubelic_schedule_draft': {
+        if (
+          typeof input.draftId !== 'string'
+          || typeof input.scheduledAt !== 'string'
+          || typeof input.policyId !== 'string'
+        ) throw new Error('draftId, scheduledAt and policyId are required');
+        result = await client.post(
+          `/api/cubelic/drafts/${encodeURIComponent(input.draftId)}/schedule`,
+          { scheduledAt: input.scheduledAt, policyId: input.policyId },
+        );
+        break;
+      }
       case 'cubelic_collect_metrics': result = await client.post('/api/cubelic/metrics/collect', input); break;
       case 'cubelic_system_status': result = await client.get('/api/cubelic/admin/status'); break;
       default: throw new Error(`Tool ${name} is not implemented`);

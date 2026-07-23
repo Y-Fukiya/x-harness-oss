@@ -41,6 +41,18 @@ export function isPhase3PublicationEnabled(env: Env['Bindings']): boolean {
     && env.STAGING_PHASE3_SMOKE_VERIFIED === 'true';
 }
 
+export function isPhase3MediaDeliveryEnabled(env: Env['Bindings']): boolean {
+  const stagingSmokeMode = env.ENVIRONMENT === 'staging'
+    && isStagingFakeDelivery(env)
+    && env.CUBELIC_PHASE3_MEDIA_SMOKE_MODE === 'true';
+  const verifiedRelease = env.STAGING_PHASE3_MEDIA_SMOKE_VERIFIED === 'true'
+    && env.MEDIA_RETENTION_POLICY_VERIFIED === 'true';
+  return isPhase3PublicationEnabled(env)
+    && env.CUBELIC_PHASE3_MEDIA_ENABLED === 'true'
+    && (stagingSmokeMode || verifiedRelease)
+    && Boolean(env.CUBELIC_MEDIA);
+}
+
 export function isPhase1RouteBlocked(method: string, path: string, env: Env['Bindings']): boolean {
   void env;
   if (method === 'OPTIONS') return false;

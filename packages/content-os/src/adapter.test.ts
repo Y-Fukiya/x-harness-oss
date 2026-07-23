@@ -69,6 +69,55 @@ describe('Phase3XPublishingAdapter', () => {
     expect(publishWriter).toHaveBeenCalledOnce();
   });
 
+  it('keeps media delivery disabled unless its separate capability is enabled', async () => {
+    const publishWriter = vi.fn();
+    const adapter = new Phase3XPublishingAdapter({
+      enabled: true,
+      isEmergencyStopped: async () => false,
+      checkRateLimit: async () => ({ allowed: true as const }),
+      scheduleWriter: vi.fn(),
+      publishWriter,
+    });
+
+    await expect(adapter.publishPost({
+      ...approvedPublication,
+      mediaAssetIds: ['asset_1'],
+      authorization: {
+        kind: 'human_individual',
+        operatorId: 'operator_1',
+        authorizedAt: '2026-07-23T01:04:00.000Z',
+      },
+    })).rejects.toMatchObject({ code: 'media_delivery_disabled' });
+    expect(publishWriter).not.toHaveBeenCalled();
+  });
+
+  it('passes reviewed media to the publication writer when media delivery is enabled', async () => {
+    const publishWriter = vi.fn(async () => ({
+      postId: 'post_media_1',
+      status: 'published' as const,
+      publishedAt: '2026-07-23T01:05:00.000Z',
+    }));
+    const adapter = new Phase3XPublishingAdapter({
+      enabled: true,
+      mediaDeliveryEnabled: true,
+      isEmergencyStopped: async () => false,
+      checkRateLimit: async () => ({ allowed: true as const }),
+      scheduleWriter: vi.fn(),
+      publishWriter,
+    });
+
+    await expect(adapter.publishPost({
+      ...approvedPublication,
+      mediaAssetIds: ['asset_1'],
+      authorization: {
+        kind: 'human_individual',
+        operatorId: 'operator_1',
+        authorizedAt: '2026-07-23T01:04:00.000Z',
+      },
+    })).resolves.toMatchObject({ postId: 'post_media_1' });
+    expect(publishWriter).toHaveBeenCalledOnce();
+  });
+
   it('schedules only an allowlisted pre-approved template', async () => {
     const scheduleWriter = vi.fn(async () => ({
       jobId: 'job_1',

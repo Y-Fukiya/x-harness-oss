@@ -52,8 +52,12 @@ if (!status.response.ok) {
   if (status.body?.data?.emergencyStop !== true) {
     failures.push('CUBΣLIC D1 emergency stop is not active');
   }
-  if (status.body?.data?.publishingEnabled !== false || status.body?.data?.schedulingEnabled !== false) {
-    failures.push('CUBΣLIC status exposed publishing or scheduling');
+  if (
+    status.body?.data?.publishingEnabled !== false
+    || status.body?.data?.schedulingEnabled !== false
+    || status.body?.data?.mediaDeliveryEnabled !== false
+  ) {
+    failures.push('CUBΣLIC status exposed publishing, scheduling, or media delivery');
   }
 }
 

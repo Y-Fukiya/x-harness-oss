@@ -28,6 +28,7 @@ import {
   getCubelicPublicationJob,
   getCubelicInertDraft,
   getCubelicMetricsSummary,
+  getCubelicMediaObject,
   handoffCubelicDraftAndStop,
   listCubelicDrafts,
   reserveCubelicDraftApproval,
@@ -40,6 +41,7 @@ import {
   updateCubelicDraftText,
   upsertCubelicSongMaster,
   saveCubelicMetrics,
+  stageCubelicMediaObject,
   type AuditInput,
 } from './cubelic.js';
 import { compileMigrationForD1Exec } from './d1-test-utils.js';
@@ -50,6 +52,7 @@ const migrationPaths = [
   fileURLToPath(new URL('../migrations/020-cubelic-phase3-publication.sql', import.meta.url)),
   fileURLToPath(new URL('../migrations/021-cubelic-publication-reconciliation.sql', import.meta.url)),
   fileURLToPath(new URL('../migrations/022-cubelic-operation-window-publication-lock.sql', import.meta.url)),
+  fileURLToPath(new URL('../migrations/027-cubelic-media-delivery.sql', import.meta.url)),
 ];
 
 function audit(action: string, entityId: string): AuditInput {
@@ -199,6 +202,57 @@ describe('CUBΣLIC D1 integration', () => {
     expect((await db.prepare(
       "SELECT COUNT(*) AS count FROM cubelic_audit_logs WHERE action = 'system.operation_window_expired'",
     ).first<{ count: number }>())?.count).toBe(1);
+  });
+
+  it('stages one immutable R2 object for an approved media asset with an audit record', async () => {
+    await setCubelicEmergencyStop(db, false, 'integration-operator', audit('system.emergency_resume', 'media_stage'));
+    await createCubelicEvent(db, eventFixture, audit('event.created', eventFixture.event_id));
+    await createCubelicMedia(db, mediaFixture, [], audit('media.validated', mediaFixture.asset_id));
+
+    const staged = await stageCubelicMediaObject(db, {
+      assetId: mediaFixture.asset_id,
+      r2Key: `media/${mediaFixture.sha256}`,
+      sha256: mediaFixture.sha256,
+      contentType: 'video/mp4',
+      byteSize: 4_194_304,
+      stagedBy: 'Integration Operator',
+    }, audit('media.object_staged', mediaFixture.asset_id));
+
+    expect(staged).toMatchObject({
+      assetId: mediaFixture.asset_id,
+      r2Key: `media/${mediaFixture.sha256}`,
+      contentType: 'video/mp4',
+      byteSize: 4_194_304,
+    });
+    await expect(getCubelicMediaObject(db, mediaFixture.asset_id)).resolves.toEqual(staged);
+    expect((await db.prepare(
+      "SELECT COUNT(*) AS count FROM cubelic_audit_logs WHERE action = 'media.object_staged'",
+    ).first<{ count: number }>())?.count).toBe(1);
+
+    await expect(stageCubelicMediaObject(db, {
+      assetId: mediaFixture.asset_id,
+      r2Key: 'media/different',
+      sha256: mediaFixture.sha256,
+      contentType: 'video/mp4',
+      byteSize: 4_194_304,
+      stagedBy: 'Integration Operator',
+    }, audit('media.object_staged', mediaFixture.asset_id))).rejects.toThrow(/already staged/);
+
+    const oversizedAsset = {
+      ...mediaFixture,
+      asset_id: 'ast_oversized_image',
+      path: '/exports/oversized-image.jpg',
+      sha256: 'b'.repeat(64),
+    };
+    await createCubelicMedia(db, oversizedAsset, [], audit('media.validated', oversizedAsset.asset_id));
+    await expect(stageCubelicMediaObject(db, {
+      assetId: oversizedAsset.asset_id,
+      r2Key: `media/${oversizedAsset.sha256}`,
+      sha256: oversizedAsset.sha256,
+      contentType: 'image/jpeg',
+      byteSize: 5 * 1024 * 1024 + 1,
+      stagedBy: 'Integration Operator',
+    }, audit('media.object_staged', oversizedAsset.asset_id))).rejects.toThrow(/CHECK constraint failed/);
   });
 
   it('keeps operation windows and publishing jobs mutually exclusive in D1', async () => {

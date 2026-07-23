@@ -16,10 +16,14 @@ const productionEnvironment = {
   X_HARNESS_ACCOUNT_ID: '89f9bfc0-428c-480b-9cb3-9ba1698c30da',
   CUBELIC_SAFE_MODE: 'true',
   CUBELIC_PHASE3_DELIVERY_MODE: 'x',
+  CUBELIC_PHASE3_MEDIA_ENABLED: 'false',
+  CUBELIC_PHASE3_MEDIA_SMOKE_MODE: 'false',
   CUBELIC_PHASE3_ENABLED: 'true',
   CUBELIC_PHASE3_SCHEDULE_POLICIES: 'event_notice:event_notice_manual_v1',
   PHASE3_RELEASE_APPROVED: 'true',
   STAGING_PHASE3_SMOKE_VERIFIED: 'true',
+  STAGING_PHASE3_MEDIA_SMOKE_VERIFIED: 'false',
+  MEDIA_RETENTION_POLICY_VERIFIED: 'false',
   GLOBAL_PUBLISHING_DISABLED: 'false',
   STAGING_SMOKE_VERIFIED: 'true',
   CORS_ALLOWED_ORIGINS: 'https://ops.cubelic-fan.com',
@@ -108,6 +112,21 @@ describe('production preflight phase boundaries', () => {
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('GLOBAL_PUBLISHING_DISABLED must be explicitly false');
+  });
+
+  it('requires media delivery to match the separately reviewed production flag', () => {
+    const result = preflight({ CUBELIC_PHASE3_MEDIA_ENABLED: 'true' });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(
+      'STAGING_PHASE3_MEDIA_SMOKE_VERIFIED must be true',
+    );
+    expect(result.stderr).toContain(
+      'MEDIA_RETENTION_POLICY_VERIFIED must be true',
+    );
+    expect(result.stderr).toContain(
+      'wrangler production CUBELIC_PHASE3_MEDIA_ENABLED does not match',
+    );
   });
 
   it('allows an explicitly approved Phase 3 release only with exact allowlists and resumed environment', () => {

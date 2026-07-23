@@ -21,6 +21,10 @@ describe('boundary checker CLI', () => {
 [env.production.vars]
 CUBELIC_SAFE_MODE = "true"
 CUBELIC_PHASE3_ENABLED = "true"
+CUBELIC_PHASE3_MEDIA_ENABLED = "false"
+CUBELIC_PHASE3_MEDIA_SMOKE_MODE = "false"
+STAGING_PHASE3_MEDIA_SMOKE_VERIFIED = "false"
+MEDIA_RETENTION_POLICY_VERIFIED = "false"
 GLOBAL_PUBLISHING_DISABLED = "false"
 CUBELIC_PHASE3_DELIVERY_MODE = "x"
 PHASE3_RELEASE_APPROVED = "false"
@@ -40,6 +44,10 @@ CUBELIC_PHASE3_SCHEDULE_POLICIES = "dm_campaign:unsafe"
 WORKER_URL = "https://x-harness-worker-staging.evil.example"
 CUBELIC_SAFE_MODE = "true"
 CUBELIC_PHASE3_ENABLED = "true"
+CUBELIC_PHASE3_MEDIA_ENABLED = "false"
+CUBELIC_PHASE3_MEDIA_SMOKE_MODE = "false"
+STAGING_PHASE3_MEDIA_SMOKE_VERIFIED = "false"
+MEDIA_RETENTION_POLICY_VERIFIED = "false"
 GLOBAL_PUBLISHING_DISABLED = "false"
 CUBELIC_PHASE3_DELIVERY_MODE = "staging_fake"
 PHASE3_RELEASE_APPROVED = "true"
@@ -52,6 +60,35 @@ CUBELIC_PHASE3_SCHEDULE_POLICIES = "event_notice:event_notice_manual_v1"
     ]);
   });
 
+  it('rejects media delivery without Phase 3 and a dedicated R2 binding', () => {
+    const violations = validateWranglerBoundaries(`
+[env.production]
+workers_dev = false
+preview_urls = false
+routes = [{ pattern = "api.example.test", custom_domain = true }]
+
+[env.production.vars]
+CUBELIC_SAFE_MODE = "true"
+CUBELIC_PHASE3_ENABLED = "true"
+CUBELIC_PHASE3_MEDIA_ENABLED = "true"
+CUBELIC_PHASE3_MEDIA_SMOKE_MODE = "false"
+STAGING_PHASE3_MEDIA_SMOKE_VERIFIED = "false"
+MEDIA_RETENTION_POLICY_VERIFIED = "false"
+GLOBAL_PUBLISHING_DISABLED = "false"
+CUBELIC_PHASE3_DELIVERY_MODE = "x"
+PHASE3_RELEASE_APPROVED = "true"
+STAGING_PHASE3_SMOKE_VERIFIED = "true"
+CUBELIC_PHASE3_SCHEDULE_POLICIES = "event_notice:event_notice_manual_v1"
+`);
+
+    expect(violations).toContain(
+      'apps/worker/wrangler.toml: env.production media delivery requires verified media smoke and retention policy',
+    );
+    expect(violations).toContain(
+      'apps/worker/wrangler.toml: env.production media delivery requires the dedicated CUBELIC_MEDIA R2 binding',
+    );
+  });
+
   it('rejects a production Worker that exposes default origins or lacks a custom API domain', () => {
     const violations = validateWranglerBoundaries(`
 [env.production]
@@ -61,6 +98,10 @@ workers_dev = true
 WORKER_URL = "https://api.example.com"
 CUBELIC_SAFE_MODE = "true"
 CUBELIC_PHASE3_ENABLED = "true"
+CUBELIC_PHASE3_MEDIA_ENABLED = "false"
+CUBELIC_PHASE3_MEDIA_SMOKE_MODE = "false"
+STAGING_PHASE3_MEDIA_SMOKE_VERIFIED = "false"
+MEDIA_RETENTION_POLICY_VERIFIED = "false"
 GLOBAL_PUBLISHING_DISABLED = "false"
 CUBELIC_PHASE3_DELIVERY_MODE = "x"
 PHASE3_RELEASE_APPROVED = "true"

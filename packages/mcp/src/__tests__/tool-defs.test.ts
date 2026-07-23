@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { scrapeToolDefs } from '../tools/scrape.js';
 import { growthToolDefs } from '../tools/growth.js';
+import { cubelicToolDefs } from '../tools/cubelic.js';
 
 describe('scrapeToolDefs', () => {
   it('registers all four scrape tools with required fields', () => {
@@ -33,5 +34,19 @@ describe('growthToolDefs', () => {
   it('add_growth_draft warns about the JST scheduledAt format', () => {
     const def = growthToolDefs.find((t) => t.name === 'add_growth_draft')!;
     expect(def.description).toContain('YYYY-MM-DDTHH:MM:SS+09:00');
+  });
+});
+
+describe('safe content operations tool definitions', () => {
+  it('exposes scheduling for an already approved draft without exposing approval or immediate publication', () => {
+    const names = cubelicToolDefs.map((tool) => tool.name);
+    expect(names).toContain('cubelic_schedule_draft');
+    expect(names).not.toContain('cubelic_approve_draft');
+    expect(names).not.toContain('cubelic_publish_draft');
+    const schedule = cubelicToolDefs.find((tool) => tool.name === 'cubelic_schedule_draft');
+    expect(schedule?.inputSchema).toMatchObject({
+      required: ['draftId', 'scheduledAt', 'policyId'],
+      additionalProperties: false,
+    });
   });
 });

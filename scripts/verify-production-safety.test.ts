@@ -10,6 +10,7 @@ const stoppedStatus = {
   operationWindow: null,
   publishingEnabled: false,
   schedulingEnabled: false,
+  mediaDeliveryEnabled: false,
 };
 
 describe('production safety verifier', () => {
@@ -24,11 +25,13 @@ describe('production safety verifier', () => {
       emergencyStopValid: false,
       publishingEnabled: true,
       schedulingEnabled: true,
+      mediaDeliveryEnabled: true,
     })).toEqual([
       'CUBΣLIC safe mode is not active',
       'D1 emergency-stop state is missing or invalid',
       'immediate publishing is enabled',
       'scheduling is enabled',
+      'media delivery is enabled',
     ]);
   });
 

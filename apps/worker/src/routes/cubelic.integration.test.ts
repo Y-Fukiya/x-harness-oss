@@ -5,17 +5,27 @@ import { Miniflare } from 'miniflare';
 import { Phase1XPublishingAdapter, Phase3XPublishingAdapter, type ScheduleInput, type XDraftInput } from '@x-harness/content-os';
 import {
   createCubelicInertDraft,
+  createCubelicEvent,
+  createCubelicMedia,
+  createCubelicContent,
+  createCubelicDrafts,
   createCubelicPublicationJob,
   getCubelicEmergencyStop,
   getCubelicPublicationJob,
   setCubelicEmergencyStop,
   setCubelicOperationWindow,
+  reserveCubelicDraftApproval,
+  stageCubelicMediaObject,
 } from '@x-harness/db';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cubelic } from './cubelic.js';
 import type { Env } from '../index.js';
 import { compileMigrationForD1Exec } from '../../../../packages/db/src/d1-test-utils.js';
-import { isCubelicPublicationStopped, processDueCubelicPublications } from '../cubelic/adapter.js';
+import {
+  PublicationDeliveryNotAttemptedError,
+  isCubelicPublicationStopped,
+  processDueCubelicPublications,
+} from '../cubelic/adapter.js';
 
 const migrationPaths = [
   fileURLToPath(new URL('../../../../packages/db/migrations/008-staff-members.sql', import.meta.url)),
@@ -25,6 +35,7 @@ const migrationPaths = [
   fileURLToPath(new URL('../../../../packages/db/migrations/020-cubelic-phase3-publication.sql', import.meta.url)),
   fileURLToPath(new URL('../../../../packages/db/migrations/021-cubelic-publication-reconciliation.sql', import.meta.url)),
   fileURLToPath(new URL('../../../../packages/db/migrations/022-cubelic-operation-window-publication-lock.sql', import.meta.url)),
+  fileURLToPath(new URL('../../../../packages/db/migrations/027-cubelic-media-delivery.sql', import.meta.url)),
 ];
 
 describe('CUBΣLIC Worker API integration', () => {
@@ -35,6 +46,7 @@ describe('CUBΣLIC Worker API integration', () => {
   let createDraft: ReturnType<typeof vi.fn>;
   let publishPost: ReturnType<typeof vi.fn>;
   let schedulePost: ReturnType<typeof vi.fn>;
+  let mediaBucket: R2Bucket;
 
   beforeEach(async () => {
     miniflare = new Miniflare({
@@ -42,8 +54,10 @@ describe('CUBΣLIC Worker API integration', () => {
       modules: true,
       script: 'export default { fetch() { return new Response("ok") } }',
       d1Databases: { DB: 'cubelic-api-integration-test' },
+      r2Buckets: { MEDIA: 'cubelic-media-integration-test' },
     });
     db = await miniflare.getD1Database('DB') as unknown as D1Database;
+    mediaBucket = await miniflare.getR2Bucket('MEDIA') as unknown as R2Bucket;
     for (const migrationPath of migrationPaths) {
       await db.exec(compileMigrationForD1Exec(await readFile(migrationPath, 'utf8')));
     }
@@ -70,6 +84,7 @@ describe('CUBΣLIC Worker API integration', () => {
       HUMAN_APPROVAL_KEY: 'integration-human-key-with-at-least-32-bytes',
       HERMES_ACCESS_TOKEN: 'integration-hermes-key',
       X_HARNESS_ACCOUNT_ID: 'x_account_row_integration',
+      CUBELIC_MEDIA: mediaBucket,
     };
     app = new Hono<Env>();
     createDraft = vi.fn(async (input: XDraftInput) => createCubelicInertDraft(db, bindings.X_HARNESS_ACCOUNT_ID!, input));
@@ -105,6 +120,15 @@ describe('CUBΣLIC Worker API integration', () => {
         scheduleWriter: schedulePost,
         publishWriter: publishPost,
       }));
+      c.set('cubelicMediaBodyWriter', async (input) => {
+        const body = await new Response(input.body).arrayBuffer();
+        return input.bucket.put(input.r2Key, body, {
+          onlyIf: { etagDoesNotMatch: '*' },
+          sha256: input.checksum,
+          httpMetadata: { contentType: input.contentType },
+          customMetadata: { assetId: input.assetId, sha256: input.sha256 },
+        });
+      });
       return next();
     });
     app.route('/', cubelic);
@@ -173,6 +197,298 @@ describe('CUBΣLIC Worker API integration', () => {
     expect((await db.prepare(
       "SELECT COUNT(*) AS count FROM cubelic_audit_logs WHERE action = 'staff.operator_bootstrapped'",
     ).first<{ count: number }>())?.count).toBe(1);
+  });
+
+  it('streams an approved media body to its immutable R2 key without granting Hermes approval authority', async () => {
+    bindings.CUBELIC_PHASE3_ENABLED = 'true';
+    bindings.CUBELIC_PHASE3_MEDIA_ENABLED = 'true';
+    bindings.CUBELIC_PHASE3_MEDIA_SMOKE_MODE = 'true';
+    bindings.STAGING_PHASE3_MEDIA_SMOKE_VERIFIED = 'false';
+    bindings.MEDIA_RETENTION_POLICY_VERIFIED = 'false';
+    bindings.ENVIRONMENT = 'staging';
+    bindings.PHASE3_RELEASE_APPROVED = 'true';
+    bindings.STAGING_PHASE3_SMOKE_VERIFIED = 'true';
+    bindings.CUBELIC_PHASE3_DELIVERY_MODE = 'staging_fake';
+    bindings.WORKER_URL = 'https://x-harness-worker-staging.yoshihiro-fukiya.workers.dev';
+
+    const bytes = new TextEncoder().encode('safe-media-fixture');
+    const digest = await crypto.subtle.digest('SHA-256', bytes);
+    const sha256 = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+    const event = {
+      event_id: 'evt_media_stage',
+      title: 'MEDIA STAGE TEST',
+      venue: 'TEST VENUE',
+      starts_at: '2026-07-23T10:00:00.000Z',
+      ends_at: '2026-07-23T11:00:00.000Z',
+      state: 'digest_ready' as const,
+      event_tags: [],
+      filming_policy: {
+        confirmed: true,
+        scope: 'full_event' as const,
+        evidence_type: 'staff_confirmation' as const,
+        evidence_url: 'https://example.test/evidence/media-stage',
+        confirmed_at: '2026-07-23T09:00:00.000Z',
+        confirmed_by: 'human_operator',
+      },
+    };
+    await createCubelicEvent(db, event, {
+      actor: 'human', action: 'event.created', entityType: 'event', entityId: event.event_id,
+      before: {}, after: {}, correlationId: 'corr_media_stage_event',
+    });
+    await createCubelicMedia(db, {
+      asset_id: 'ast_media_stage',
+      event_id: event.event_id,
+      path: '/exports/media-stage.mp4',
+      sha256,
+      duration_seconds: 3,
+      orientation: 'vertical',
+      resolution: '1080x1920',
+      audio_present: true,
+      rights: {
+        filming_policy_confirmed: true,
+        publishing_allowed: true,
+        evidence_url: 'https://example.test/evidence/media-stage',
+        song_scope_confirmed: true,
+      },
+      privacy: {
+        audience_visible: false,
+        third_party_faces_detected: false,
+        manual_review_completed: true,
+        cropping_required: false,
+        blurring_required: false,
+      },
+      quality: { video_ok: true, audio_ok: true, sync_ok: true, score: 90 },
+      status: 'approved_for_draft',
+    }, [], {
+      actor: 'human', action: 'media.validated', entityType: 'media', entityId: 'ast_media_stage',
+      before: {}, after: {}, correlationId: 'corr_media_stage_asset',
+    });
+
+    const uploadHeaders = {
+      'content-type': 'video/mp4',
+      'content-length': String(bytes.byteLength),
+      'x-content-sha256': sha256,
+      'X-Test-Actor': 'human',
+      'X-Human-Approval-Key': 'integration-human-key-with-at-least-32-bytes',
+    };
+    const unnamed = await request('/api/cubelic/media/ast_media_stage/body', {
+      method: 'PUT',
+      headers: {
+        ...uploadHeaders,
+        'X-Test-Global': 'true',
+      },
+      body: bytes,
+    });
+    expect(unnamed.status).toBe(403);
+
+    const response = await request('/api/cubelic/media/ast_media_stage/body', {
+      method: 'PUT',
+      headers: uploadHeaders,
+      body: bytes,
+    });
+    expect(response.status).toBe(201);
+    await expect(response.json()).resolves.toMatchObject({
+      data: {
+        assetId: 'ast_media_stage',
+        r2Key: `media/${sha256}`,
+        sha256,
+        contentType: 'video/mp4',
+        byteSize: bytes.byteLength,
+        stagedBy: 'staff_integration_operator',
+      },
+    });
+    const object = await mediaBucket.get(`media/${sha256}`);
+    expect(object).not.toBeNull();
+    expect(new Uint8Array(await object!.arrayBuffer())).toEqual(bytes);
+
+    await setCubelicEmergencyStop(db, true, 'Integration Operator', {
+      actor: 'human',
+      action: 'system.emergency_stop',
+      entityType: 'system',
+      entityId: 'global',
+      before: { emergencyStop: false },
+      after: { emergencyStop: true },
+      correlationId: 'corr_media_quarantine_stop',
+    });
+    const quarantine = await request('/api/cubelic/media/ast_media_stage/quarantine', {
+      method: 'POST',
+      headers: {
+        'X-Human-Approval-Key': 'integration-human-key-with-at-least-32-bytes',
+      },
+    });
+    expect(quarantine.status).toBe(200);
+    expect(await mediaBucket.head(`media/${sha256}`)).toBeNull();
+    expect((await db.prepare(
+      "SELECT COUNT(*) AS count FROM cubelic_audit_logs WHERE action = 'media.quarantined' AND entity_id = ?",
+    ).bind('ast_media_stage').first<{ count: number }>())?.count).toBe(1);
+  });
+
+  it('passes approved staged media through the scheduled Cron delivery seam', async () => {
+    bindings.CUBELIC_PHASE3_ENABLED = 'true';
+    bindings.CUBELIC_PHASE3_MEDIA_ENABLED = 'true';
+    bindings.STAGING_PHASE3_MEDIA_SMOKE_VERIFIED = 'true';
+    bindings.MEDIA_RETENTION_POLICY_VERIFIED = 'true';
+    bindings.PHASE3_RELEASE_APPROVED = 'true';
+    bindings.STAGING_PHASE3_SMOKE_VERIFIED = 'true';
+    bindings.CUBELIC_PHASE3_DELIVERY_MODE = 'staging_fake';
+    bindings.WORKER_URL = 'https://x-harness-worker-staging.yoshihiro-fukiya.workers.dev';
+    bindings.CUBELIC_PHASE3_SCHEDULE_POLICIES = 'live_digest:live_digest_media_v1';
+
+    const mediaBytes = new Uint8Array([1, 2, 3]);
+    const mediaChecksum = await crypto.subtle.digest('SHA-256', mediaBytes);
+    const sha256 = Array.from(new Uint8Array(mediaChecksum), (byte) => byte.toString(16).padStart(2, '0')).join('');
+    const eventId = 'evt_media_cron';
+    const assetId = 'ast_media_cron';
+    const contentId = 'cnt_media_cron';
+    const draftId = 'drf_media_cron';
+    await createCubelicEvent(db, {
+      event_id: eventId,
+      title: 'MEDIA CRON TEST',
+      venue: 'TEST VENUE',
+      starts_at: '2026-07-23T10:00:00.000Z',
+      ends_at: '2026-07-23T11:00:00.000Z',
+      state: 'digest_ready',
+      event_tags: [],
+      filming_policy: {
+        confirmed: true,
+        scope: 'full_event',
+        evidence_type: 'staff_confirmation',
+        evidence_url: 'https://example.test/evidence/media-cron',
+        confirmed_at: '2026-07-23T09:00:00.000Z',
+        confirmed_by: 'human_operator',
+      },
+    }, {
+      actor: 'human', action: 'event.created', entityType: 'event', entityId: eventId,
+      before: {}, after: {}, correlationId: 'corr_media_cron_event',
+    });
+    await createCubelicMedia(db, {
+      asset_id: assetId,
+      event_id: eventId,
+      path: '/exports/media-cron.jpg',
+      sha256,
+      duration_seconds: 1,
+      orientation: 'square',
+      resolution: '1080x1080',
+      audio_present: false,
+      rights: {
+        filming_policy_confirmed: true,
+        publishing_allowed: true,
+        evidence_url: 'https://example.test/evidence/media-cron',
+        song_scope_confirmed: true,
+      },
+      privacy: {
+        audience_visible: false,
+        third_party_faces_detected: false,
+        manual_review_completed: true,
+        cropping_required: false,
+        blurring_required: false,
+      },
+      quality: { video_ok: true, audio_ok: true, sync_ok: true, score: 90 },
+      status: 'approved_for_draft',
+    }, [], {
+      actor: 'human', action: 'media.validated', entityType: 'media', entityId: assetId,
+      before: {}, after: {}, correlationId: 'corr_media_cron_asset',
+    });
+    await mediaBucket.put(`media/${sha256}`, mediaBytes, {
+      sha256: mediaChecksum,
+      httpMetadata: { contentType: 'image/jpeg' },
+      customMetadata: { assetId, sha256 },
+    });
+    await stageCubelicMediaObject(db, {
+      assetId,
+      r2Key: `media/${sha256}`,
+      sha256,
+      contentType: 'image/jpeg',
+      byteSize: 3,
+      stagedBy: 'human_operator',
+    }, {
+      actor: 'human', action: 'media.object_staged', entityType: 'media', entityId: assetId,
+      before: {}, after: {}, correlationId: 'corr_media_cron_object',
+    });
+    await createCubelicContent(db, {
+      content_id: contentId,
+      event_id: eventId,
+      category: 'live_digest',
+      target_stage: 'interested',
+      content_lifecycle: { type: 'news', expires_at: null },
+      status: 'draft_generated',
+      source_type: 'media_asset',
+      source_refs: [assetId],
+      member_ids: [],
+      song_ids: [],
+      emotion_tags: ['informative'],
+      destination: {
+        type: 'live_report',
+        base_url: 'https://example.test/media-cron',
+        tracked_url: 'https://example.test/media-cron',
+      },
+      created_at: '2026-07-23T11:01:00.000Z',
+      updated_at: '2026-07-23T11:01:00.000Z',
+    }, {
+      actor: 'human', action: 'content.created', entityType: 'content', entityId: contentId,
+      before: {}, after: {}, correlationId: 'corr_media_cron_content',
+    });
+    await createCubelicDrafts(db, [{
+      draft_id: draftId,
+      content_id: contentId,
+      account_id: 'tubelic_cube',
+      text: '媒体付き予約投稿のテストです',
+      media_asset_ids: [assetId],
+      category: 'live_digest',
+      template_id: 'live_digest_media_v1',
+      template_version: '1.0.0',
+      variant: 'a',
+      target_stage: 'interested',
+      emotion_tags: ['informative'],
+      hashtags: [],
+      destination_url: 'https://example.test/media-cron',
+      utm: { source: 'x', medium: 'social', campaign: 'test', content: 'media' },
+      quality_score: 80,
+      quality_breakdown: {
+        accuracy: 80, freshness: 80, rarity: 80, newcomer_clarity: 80,
+        appeal: 80, route_clarity: 80, conversation_shareability: 80,
+      },
+      freshness_score: 80,
+      rights_gate: 'passed',
+      approval_status: 'pending_review',
+      risks: [],
+      human_review_required: [],
+      idempotency_key: 'media-cron-key',
+      scheduled_at: null,
+      published_post_id: null,
+      created_at: '2026-07-23T11:02:00.000Z',
+      updated_at: '2026-07-23T11:02:00.000Z',
+    }], [{
+      actor: 'human', action: 'draft.created', entityType: 'draft', entityId: draftId,
+      before: {}, after: {}, correlationId: 'corr_media_cron_draft',
+    }]);
+    await reserveCubelicDraftApproval(db, draftId, 'staff_integration_operator', {
+      actor: 'human', action: 'draft.approval_reserved', entityType: 'draft', entityId: draftId,
+      before: {}, after: {}, correlationId: 'corr_media_cron_approval',
+    });
+    const dueAt = new Date(Date.now() - 60_000).toISOString();
+    const job = await createCubelicPublicationJob(db, {
+      draftId,
+      operation: 'schedule',
+      authorizationKind: 'preapproved_template',
+      policyId: 'live_digest_media_v1',
+      authorizedBy: 'staff_integration_operator',
+      authorizedAt: new Date(Date.now() - 120_000).toISOString(),
+      scheduledAt: dueAt,
+      idempotencyKey: 'media-cron-job',
+    }, {
+      actor: 'human', action: 'publication.scheduled', entityType: 'publication_job', entityId: draftId,
+      before: {}, after: {}, correlationId: 'corr_media_cron_job',
+    });
+    await processDueCubelicPublications(bindings, new Date());
+
+    await expect(getCubelicPublicationJob(db, job.jobId)).resolves.toMatchObject({
+      status: 'published',
+      postId: expect.stringMatching(/^staging_fake_/),
+    });
+    expect((await db.prepare(
+      "SELECT COUNT(*) AS count FROM cubelic_audit_logs WHERE action IN ('publication.media_upload_started','publication.media_uploaded') AND entity_id = ?",
+    ).bind(job.jobId).first<{ count: number }>())?.count).toBe(2);
   });
 
   it('keeps every non-metrics write stopped while the environment emergency stop is active', async () => {
@@ -424,6 +740,33 @@ describe('CUBΣLIC Worker API integration', () => {
     });
     bindings.CUBELIC_PHASE3_SCHEDULE_POLICIES = 'event_notice:event_notice_manual_v1';
 
+    const prePostFailureAt = new Date(Date.now() + 4 * 60 * 60_000);
+    const prePostFailureJob = await createCubelicPublicationJob(db, {
+      draftId: manualBody.data.draft_id,
+      operation: 'schedule',
+      authorizationKind: 'preapproved_template',
+      policyId: 'event_notice_manual_v1',
+      authorizedBy: 'staff_integration_operator',
+      authorizedAt: new Date().toISOString(),
+      scheduledAt: prePostFailureAt.toISOString(),
+      idempotencyKey: 'integration:cron:pre-post-failure',
+    }, {
+      actor: 'human',
+      action: 'publication.scheduled',
+      entityType: 'publication_job',
+      entityId: manualBody.data.draft_id,
+      before: {},
+      after: { scheduledAt: prePostFailureAt.toISOString() },
+      correlationId: 'corr_cron_pre_post_failure',
+    });
+    await processDueCubelicPublications(bindings, prePostFailureAt, async () => {
+      throw new PublicationDeliveryNotAttemptedError('media_storage_inconsistent', new Error('missing R2 body'));
+    });
+    await expect(getCubelicPublicationJob(db, prePostFailureJob.jobId)).resolves.toMatchObject({
+      status: 'failed',
+      failureCode: 'media_storage_inconsistent',
+    });
+
     const unknownAt = new Date(Date.now() + 5 * 60 * 60_000);
     const unknownJob = await createCubelicPublicationJob(db, {
       draftId: manualBody.data.draft_id,
@@ -453,6 +796,7 @@ describe('CUBΣLIC Worker API integration', () => {
     expect((await db.prepare(
       "SELECT COUNT(*) AS count FROM cubelic_audit_logs WHERE action = 'publication.outcome_unknown' AND entity_id = ?",
     ).bind(unknownJob.jobId).first<{ count: number }>())?.count).toBe(1);
+
     expect((await db.prepare(
       "SELECT COUNT(*) AS count FROM cubelic_audit_logs WHERE action IN ('manual_authority.created','draft.manual_created')",
     ).first<{ count: number }>())?.count).toBe(2);

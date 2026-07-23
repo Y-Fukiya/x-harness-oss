@@ -48,6 +48,7 @@ export interface PublicationRateDecision {
 
 export interface Phase3XPublishingAdapterOptions {
   enabled: boolean;
+  mediaDeliveryEnabled?: boolean;
   allowedSchedulePolicies?: Array<{ category: ContentCategory; templateId: string }>;
   isEmergencyStopped: () => Promise<boolean>;
   checkRateLimit: (
@@ -108,12 +109,6 @@ export class Phase3XPublishingAdapter implements XPublishingAdapter {
         'The category and template pair is not an approved scheduling policy',
       );
     }
-    if (input.mediaAssetIds.length > 0) {
-      throw new PublicationPolicyError(
-        'media_delivery_not_configured',
-        'Scheduled media delivery requires the reviewed upload boundary',
-      );
-    }
     const scheduledAt = new Date(input.scheduledAt);
     if (!Number.isFinite(scheduledAt.getTime()) || scheduledAt.getTime() <= this.now().getTime()) {
       throw new PublicationPolicyError('scheduled_time_invalid', 'Scheduled time must be a valid future timestamp');
@@ -152,6 +147,12 @@ export class Phase3XPublishingAdapter implements XPublishingAdapter {
   ): Promise<void> {
     if (!this.options.enabled) {
       throw new PublicationPolicyError('phase3_operation_disabled', 'Phase 3 publication capability is disabled');
+    }
+    if (input.mediaAssetIds.length > 0 && this.options.mediaDeliveryEnabled !== true) {
+      throw new PublicationPolicyError(
+        'media_delivery_disabled',
+        'Media delivery is disabled unless its separate reviewed capability is enabled',
+      );
     }
     if (await this.options.isEmergencyStopped()) {
       throw new PublicationPolicyError('emergency_stop_active', 'Emergency stop is active');

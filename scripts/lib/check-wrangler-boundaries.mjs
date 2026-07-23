@@ -72,12 +72,43 @@ export function validateWranglerBoundaries(wrangler) {
       ) {
         violations.push(`${prefix} staging_fake delivery requires the exact dedicated staging Worker URL`);
       }
+      if (values.CUBELIC_PHASE3_MEDIA_ENABLED === 'true') {
+        const stagingSmokeMode = environment === 'staging'
+          && values.CUBELIC_PHASE3_MEDIA_SMOKE_MODE === 'true';
+        const verifiedRelease = values.STAGING_PHASE3_MEDIA_SMOKE_VERIFIED === 'true'
+          && values.MEDIA_RETENTION_POLICY_VERIFIED === 'true';
+        if (!stagingSmokeMode && !verifiedRelease) {
+          violations.push(`${prefix} media delivery requires verified media smoke and retention policy`);
+        }
+        const mediaBinding = new RegExp(
+          `\\[\\[env\\.${environment}\\.r2_buckets\\]\\][\\s\\S]*?^binding\\s*=\\s*"CUBELIC_MEDIA"$`,
+          'm',
+        ).test(wrangler);
+        if (!mediaBinding) {
+          violations.push(`${prefix} media delivery requires the dedicated CUBELIC_MEDIA R2 binding`);
+        }
+      } else if (values.CUBELIC_PHASE3_MEDIA_ENABLED !== 'false') {
+        violations.push(`${prefix} must set CUBELIC_PHASE3_MEDIA_ENABLED to true or false exactly`);
+      } else if (
+        values.CUBELIC_PHASE3_MEDIA_SMOKE_MODE !== 'false'
+        ||
+        values.STAGING_PHASE3_MEDIA_SMOKE_VERIFIED !== 'false'
+        || values.MEDIA_RETENTION_POLICY_VERIFIED !== 'false'
+      ) {
+        violations.push(`${prefix} disabled media delivery must keep media verification flags false`);
+      }
+      if (environment === 'production' && values.CUBELIC_PHASE3_MEDIA_SMOKE_MODE !== 'false') {
+        violations.push(`${prefix} production must disable media smoke mode`);
+      }
     } else {
       if (values.CUBELIC_PHASE3_ENABLED !== 'false') {
         violations.push(`${prefix} must set CUBELIC_PHASE3_ENABLED to true or false exactly`);
       }
       if (values.GLOBAL_PUBLISHING_DISABLED !== 'true') {
         violations.push(`${prefix} Phase 1 requires GLOBAL_PUBLISHING_DISABLED=true`);
+      }
+      if (values.CUBELIC_PHASE3_MEDIA_ENABLED !== 'false') {
+        violations.push(`${prefix} Phase 1 requires CUBELIC_PHASE3_MEDIA_ENABLED=false`);
       }
     }
   }

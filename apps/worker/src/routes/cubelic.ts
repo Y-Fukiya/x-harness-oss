@@ -40,6 +40,7 @@ import {
   getCubelicEvent,
   getCubelicInertDraft,
   getCubelicMedia,
+  getCubelicMediaObject,
   getCubelicManualAuthority,
   getCubelicMetricsSummary,
   getCubelicMetricsSnapshot,
@@ -63,6 +64,7 @@ import {
   setCubelicDraftDecision,
   setCubelicEmergencyStop,
   setCubelicOperationWindow,
+  stageCubelicMediaObject,
   upsertCubelicMemberMaster,
   upsertCubelicSongMaster,
   updateCubelicContent,
@@ -73,7 +75,8 @@ import {
   validateCubelicContentReferences,
 } from '@x-harness/db';
 import { buildCubelicPhase3XAdapter, buildCubelicXAdapter } from '../cubelic/adapter.js';
-import { isPhase3PublicationEnabled } from '../cubelic/safety.js';
+import { MEDIA_SIZE_LIMITS, writeMediaBodyToR2 } from '../cubelic/media-delivery.js';
+import { isPhase3MediaDeliveryEnabled, isPhase3PublicationEnabled } from '../cubelic/safety.js';
 import { parseContent, parseEvent, parseMedia, parseMemberMaster, parseSetlist, parseSongMaster } from '../cubelic/validation.js';
 import type { Env } from '../index.js';
 import { isStrongRuntimeSecret, secretsEqual } from '../security/session.js';
@@ -297,6 +300,7 @@ function isEmergencyAdmin(path: string): boolean {
     || path === '/api/cubelic/admin/emergency-resume'
     || path === '/api/cubelic/admin/operation-window'
     || path === '/api/cubelic/admin/operator-bootstrap'
+    || /^\/api\/cubelic\/media\/[^/]+\/quarantine$/.test(path)
     || /^\/api\/cubelic\/admin\/publications\/[^/]+\/reconcile$/.test(path);
 }
 
@@ -304,6 +308,7 @@ function isPhase3OperationalWrite(path: string): boolean {
   return path === '/api/cubelic/manual-drafts'
     || path === '/api/cubelic/metrics/post-mappings'
     || /^\/api\/cubelic\/content\/[^/]+\/manual-authority$/.test(path)
+    || /^\/api\/cubelic\/media\/[^/]+\/body$/.test(path)
     || /^\/api\/cubelic\/drafts\/[^/]+(?:\/(?:approve|reject|publish|schedule))?$/.test(path);
 }
 
@@ -568,6 +573,154 @@ cubelic.patch('/api/cubelic/media/:id/review', async (c) => {
       correlationId: correlationId(c),
     }, rights.passed ? undefined : rejectionInput(c, rights.rejectReasons));
     return c.json({ success: rights.passed, data: { media: reviewed, rejectReasons: rights.rejectReasons } }, rights.passed ? 200 : 422);
+  } catch (error) { return apiError(c, error); }
+});
+
+function hexSha256(value: string): ArrayBuffer {
+  if (!/^[0-9a-f]{64}$/.test(value)) {
+    throw new PublicationPolicyError('media_hash_invalid', 'X-Content-SHA256 must be a lowercase SHA-256 hex digest');
+  }
+  const bytes = new Uint8Array(32);
+  for (let index = 0; index < bytes.length; index += 1) {
+    bytes[index] = Number.parseInt(value.slice(index * 2, index * 2 + 2), 16);
+  }
+  return bytes.buffer;
+}
+
+function checksumHex(value: ArrayBuffer | undefined): string | null {
+  return value
+    ? Array.from(new Uint8Array(value), (byte) => byte.toString(16).padStart(2, '0')).join('')
+    : null;
+}
+
+cubelic.put('/api/cubelic/media/:id/body', async (c) => {
+  try {
+    if (!isPhase3MediaDeliveryEnabled(c.env)) {
+      throw new PublicationPolicyError('media_delivery_disabled', 'Media delivery capability is disabled');
+    }
+    const denied = await requireNamedHumanApproval(c);
+    if (denied) return denied;
+    if (!c.env.CUBELIC_MEDIA) {
+      return c.json({ success: false, error: 'Media storage is not configured', code: 'media_storage_not_configured' }, 503);
+    }
+    const asset = await getCubelicMedia(c.env.DB, c.req.param('id'));
+    if (!asset) return c.json({ success: false, error: 'Media asset not found' }, 404);
+    const event = await getCubelicEvent(c.env.DB, asset.event_id);
+    if (!event || asset.status !== 'approved_for_draft' || !evaluateRights(event, asset).passed) {
+      throw new PublicationPolicyError('media_rights_not_approved', 'Media rights and privacy review must pass before staging');
+    }
+    const contentType = c.req.header('content-type')?.split(';', 1)[0]?.trim().toLowerCase();
+    if (!contentType || !(contentType in MEDIA_SIZE_LIMITS)) {
+      throw new PublicationPolicyError('media_type_not_allowed', 'Media type is not allowlisted');
+    }
+    const byteSize = Number(c.req.header('content-length'));
+    const sizeLimit = MEDIA_SIZE_LIMITS[contentType as keyof typeof MEDIA_SIZE_LIMITS];
+    if (!Number.isSafeInteger(byteSize) || byteSize <= 0 || byteSize > sizeLimit) {
+      throw new PublicationPolicyError('media_size_invalid', 'Media size is missing, invalid, or exceeds the type limit');
+    }
+    const sha256 = c.req.header('x-content-sha256') ?? '';
+    const checksum = hexSha256(sha256);
+    if (sha256 !== asset.sha256) {
+      throw new PublicationPolicyError('media_hash_mismatch', 'Uploaded media hash does not match the validated asset');
+    }
+    const existing = await getCubelicMediaObject(c.env.DB, asset.asset_id);
+    if (existing) {
+      const stored = await c.env.CUBELIC_MEDIA.head(existing.r2Key);
+      if (
+        stored
+        && stored.size === existing.byteSize
+        && checksumHex(stored.checksums.sha256) === existing.sha256
+        && stored.httpMetadata?.contentType === existing.contentType
+        && stored.customMetadata?.assetId === existing.assetId
+        && stored.customMetadata?.sha256 === existing.sha256
+      ) return c.json({ success: true, data: existing });
+      throw new PublicationPolicyError('media_storage_inconsistent', 'Staged media metadata does not match R2');
+    }
+    if (!c.req.raw.body) {
+      throw new PublicationPolicyError('media_body_missing', 'Media request body is required');
+    }
+    const r2Key = `media/${sha256}`;
+    const stored = await (c.get('cubelicMediaBodyWriter') ?? writeMediaBodyToR2)({
+      bucket: c.env.CUBELIC_MEDIA,
+      r2Key,
+      body: c.req.raw.body,
+      byteSize,
+      checksum,
+      contentType,
+      assetId: asset.asset_id,
+      sha256,
+    });
+    if (stored && stored.size !== byteSize) {
+      await c.env.CUBELIC_MEDIA.delete(r2Key);
+    }
+    if (!stored || stored.size !== byteSize) {
+      throw new PublicationPolicyError('media_storage_conflict', 'Media object already exists or stored size differs');
+    }
+    try {
+      const record = await stageCubelicMediaObject(c.env.DB, {
+        assetId: asset.asset_id,
+        r2Key,
+        sha256,
+        contentType: contentType as keyof typeof MEDIA_SIZE_LIMITS,
+        byteSize,
+        stagedBy: namedHumanId(c),
+      }, {
+        actor: actor(c),
+        action: 'media.object_staged',
+        entityType: 'media',
+        entityId: asset.asset_id,
+        before: {},
+        after: { r2Key, sha256, contentType, byteSize },
+        correlationId: correlationId(c),
+      });
+      return c.json({ success: true, data: record }, 201);
+    } catch (error) {
+      await c.env.CUBELIC_MEDIA.delete(r2Key);
+      throw error;
+    }
+  } catch (error) { return apiError(c, error); }
+});
+
+cubelic.post('/api/cubelic/media/:id/quarantine', async (c) => {
+  try {
+    const denied = await requireNamedHumanApproval(c);
+    if (denied) return denied;
+    if (!c.env.CUBELIC_MEDIA) {
+      throw new PublicationPolicyError('media_storage_not_configured', 'Media storage is not configured');
+    }
+    if (!(await getCubelicEmergencyStop(c.env.DB))) {
+      throw new PublicationPolicyError('emergency_stop_required', 'Activate the emergency stop before quarantining media');
+    }
+    const assetId = c.req.param('id');
+    const operatorId = namedHumanId(c);
+    const mediaObject = await getCubelicMediaObject(c.env.DB, assetId);
+    if (!mediaObject) {
+      throw new PublicationPolicyError('media_not_staged', 'The media asset has no staged R2 object');
+    }
+    const auditCorrelationId = correlationId(c);
+    await appendCubelicAudit(c.env.DB, {
+      actor: 'human',
+      action: 'media.quarantine_started',
+      entityType: 'media',
+      entityId: assetId,
+      before: { r2Key: mediaObject.r2Key },
+      after: { emergencyStop: true, operatorId },
+      correlationId: auditCorrelationId,
+    });
+    await c.env.CUBELIC_MEDIA.delete(mediaObject.r2Key);
+    if (await c.env.CUBELIC_MEDIA.head(mediaObject.r2Key)) {
+      throw new PublicationPolicyError('media_quarantine_failed', 'R2 media object still exists after quarantine');
+    }
+    await appendCubelicAudit(c.env.DB, {
+      actor: 'human',
+      action: 'media.quarantined',
+      entityType: 'media',
+      entityId: assetId,
+      before: { r2Key: mediaObject.r2Key },
+      after: { r2ObjectPresent: false, operatorId },
+      correlationId: auditCorrelationId,
+    });
+    return c.json({ success: true, data: { assetId, quarantined: true } });
   } catch (error) { return apiError(c, error); }
 });
 
@@ -1228,6 +1381,7 @@ cubelic.get('/api/cubelic/admin/status', async (c) => {
       operationWindow,
       publishingEnabled: operational,
       schedulingEnabled: operational,
+      mediaDeliveryEnabled: operational && isPhase3MediaDeliveryEnabled(c.env),
     },
   });
 });

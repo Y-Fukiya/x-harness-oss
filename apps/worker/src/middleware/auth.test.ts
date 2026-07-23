@@ -24,6 +24,9 @@ function app() {
   value.post('/api/cubelic/drafts/:id/schedule', (c) => c.json({
     actor: c.get('requestActor'),
   }));
+  value.put('/api/cubelic/media/:id/body', (c) => c.json({
+    actor: c.get('requestActor'),
+  }));
   return value;
 }
 
@@ -80,5 +83,26 @@ describe('Phase 3 Hermes authentication boundary', () => {
       } as Env['Bindings'],
     );
     expect(response.status).toBe(503);
+  });
+
+  it('never allows Hermes to stage raw media bytes', async () => {
+    const request = (mediaEnabled: string) => app().request(
+      'https://worker.test/api/cubelic/media/ast_1/body',
+      {
+        method: 'PUT',
+        headers: { Authorization: 'Bearer hermes-secret-with-at-least-32-bytes' },
+      },
+      {
+        ...secureBindings,
+        HERMES_ACCESS_TOKEN: 'hermes-secret-with-at-least-32-bytes',
+        CUBELIC_PHASE3_ENABLED: 'true',
+        CUBELIC_PHASE3_MEDIA_ENABLED: mediaEnabled,
+        PHASE3_RELEASE_APPROVED: 'true',
+        STAGING_PHASE3_SMOKE_VERIFIED: 'true',
+      } as Env['Bindings'],
+    );
+
+    expect((await request('false')).status).toBe(403);
+    expect((await request('true')).status).toBe(403);
   });
 });

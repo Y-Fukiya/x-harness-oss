@@ -138,7 +138,7 @@ export class XClient {
    * (no body params included in signature, which matches X API media upload requirements).
    * For bearer-token accounts, attaches the Bearer token.
    */
-  async fetchRaw(url: string, init: RequestInit): Promise<Response> {
+  private async fetchRaw(url: string, init: RequestInit): Promise<Response> {
     const headers = new Headers(init.headers as Record<string, string> | undefined);
     if (this.config.type === 'oauth1') {
       const authHeader = await buildOAuth1Header(
@@ -190,6 +190,86 @@ export class XClient {
     const mediaId = (inner.id ?? inner.media_key ?? inner.media_id_string ?? inner.media_id) as string | undefined;
     if (!mediaId) {
       throw new XApiError(`Media upload: no id in response: ${raw.slice(0, 300)}`, 200);
+    }
+    return mediaId;
+  }
+
+  async uploadMediaChunks(input: {
+    mediaType: string;
+    mediaCategory: 'tweet_gif' | 'tweet_video';
+    totalBytes: number;
+    readChunk: (offset: number, length: number) => Promise<ArrayBuffer>;
+    chunkSize?: number;
+  }): Promise<string> {
+    if (!Number.isSafeInteger(input.totalBytes) || input.totalBytes <= 0) {
+      throw new XApiError('Chunked media total size is invalid', 400);
+    }
+    const chunkSize = input.chunkSize ?? 4 * 1024 * 1024;
+    if (!Number.isSafeInteger(chunkSize) || chunkSize <= 0 || chunkSize > 5 * 1024 * 1024) {
+      throw new XApiError('Chunked media part size is invalid', 400);
+    }
+    const url = 'https://api.x.com/2/media/upload';
+    const post = async (form: FormData, step: string): Promise<Record<string, unknown>> => {
+      const response = await this.fetchRaw(url, { method: 'POST', body: form });
+      if (response.status === 429) {
+        const resetAt = response.headers.get('x-rate-limit-reset');
+        throw new XApiRateLimitError(resetAt ? Number(resetAt) : undefined);
+      }
+      const text = await response.text();
+      if (!response.ok) throw new XApiError(`Media ${step} failed: ${response.status} ${text}`, response.status);
+      try {
+        return text ? JSON.parse(text) as Record<string, unknown> : {};
+      } catch {
+        throw new XApiError(`Media ${step}: invalid JSON`, response.status);
+      }
+    };
+
+    const initForm = new FormData();
+    initForm.append('command', 'INIT');
+    initForm.append('media_type', input.mediaType);
+    initForm.append('total_bytes', String(input.totalBytes));
+    initForm.append('media_category', input.mediaCategory);
+    const initialized = await post(initForm, 'INIT');
+    const initializedData = (initialized.data as Record<string, unknown> | undefined) ?? initialized;
+    const mediaId = (initializedData.id ?? initializedData.media_id_string) as string | undefined;
+    if (!mediaId) throw new XApiError('Media INIT returned no id', 502);
+
+    for (let offset = 0, segment = 0; offset < input.totalBytes; offset += chunkSize, segment += 1) {
+      const length = Math.min(chunkSize, input.totalBytes - offset);
+      const bytes = await input.readChunk(offset, length);
+      if (bytes.byteLength !== length) {
+        throw new XApiError(`Media APPEND[${segment}] returned an unexpected chunk size`, 502);
+      }
+      const appendForm = new FormData();
+      appendForm.append('command', 'APPEND');
+      appendForm.append('media_id', mediaId);
+      appendForm.append('segment_index', String(segment));
+      appendForm.append('media', new Blob([bytes], { type: input.mediaType }));
+      await post(appendForm, `APPEND[${segment}]`);
+    }
+
+    const finalizeForm = new FormData();
+    finalizeForm.append('command', 'FINALIZE');
+    finalizeForm.append('media_id', mediaId);
+    const finalized = await post(finalizeForm, 'FINALIZE');
+    let processing = ((finalized.data as Record<string, unknown> | undefined) ?? finalized).processing_info as
+      | { state: string; check_after_secs?: number }
+      | undefined;
+    const deadline = Date.now() + 180_000;
+    while (processing && processing.state !== 'succeeded') {
+      if (processing.state === 'failed') throw new XApiError('Media processing failed', 502);
+      if (Date.now() > deadline) throw new XApiError('Media processing timed out', 504);
+      const waitMilliseconds = Math.min(processing.check_after_secs ?? 2, 10) * 1000;
+      await new Promise((resolve) => setTimeout(resolve, waitMilliseconds));
+      const statusResponse = await this.fetchRaw(`${url}?command=STATUS&media_id=${mediaId}`, { method: 'GET' });
+      const statusText = await statusResponse.text();
+      if (!statusResponse.ok) {
+        throw new XApiError(`Media STATUS failed: ${statusResponse.status} ${statusText}`, statusResponse.status);
+      }
+      const status = JSON.parse(statusText) as {
+        data?: { processing_info?: { state: string; check_after_secs?: number } };
+      };
+      processing = status.data?.processing_info;
     }
     return mediaId;
   }

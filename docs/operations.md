@@ -26,7 +26,8 @@ D1 stop.
    `019-cubelic-fail-closed-boundaries.sql`,
    `020-cubelic-phase3-publication.sql`, then
    `021-cubelic-publication-reconciliation.sql`, then
-   `022-cubelic-operation-window-publication-lock.sql` to a backed-up D1 environment.
+   `022-cubelic-operation-window-publication-lock.sql`, then
+   `027-cubelic-media-delivery.sql` to a backed-up D1 environment.
 3. Set `X_HARNESS_ACCOUNT_ID` to the selected `x_accounts.id`; do not use the public username.
 4. Keep `HERMES_RUNTIME_ENABLED=false` in Phase 1 and do not provision Hermes runtime credentials. If a later reviewed release enables it, give Hermes only `HERMES_ACCESS_TOKEN` (the MCP process prefers it over `X_HARNESS_API_KEY`). Give approval UI operators `HUMAN_APPROVAL_KEY`; never expose it to Hermes.
 5. Set `CORS_ALLOWED_ORIGINS` to the exact HTTPS approval-UI origin(s), comma-separated; wildcard origins fail closed.
@@ -43,6 +44,28 @@ D1 stop.
 5. For an approved Phase 3 schedule, select the approved draft in `/cubelic` and enter the operator time in Asia/Tokyo. The UI converts it to UTC and binds the policy id to that draft's `template_id`; operators do not type an independent policy id.
 6. Confirm the audit event and resulting inert handoff, schedule job, or publication job. A publication remains a named-human action; an automated schedule is limited to the exact reviewed `category:template_id` pair.
 7. After publication, record the numeric post id with `POST /api/cubelic/metrics/post-mappings` using human approval proof. Metrics collection rejects unmapped post ids, and summaries join the post back to category, member, song, event, fan stage, template, variant and emotion dimensions.
+
+Media delivery remains a separate capability. Keep
+`CUBELIC_PHASE3_MEDIA_ENABLED=false` until migration 027, the dedicated
+`CUBELIC_MEDIA` R2 binding, and staging media smoke are complete. A validated
+asset is staged with `PUT /api/cubelic/media/:assetId/body`, exact
+`Content-Type`, `Content-Length`, and `X-Content-SHA256` headers. This route may
+only be called by a named human operator; Hermes has no raw-media-write access.
+MP4 ingress is limited to 95,000,000 bytes. Raising that limit requires
+verification of the deployed Cloudflare plan or a reviewed direct/multipart R2
+ingress design.
+Keep `MEDIA_RETENTION_POLICY_VERIFIED=false` until a bounded R2 lifecycle rule
+and the named-human incident quarantine/delete runbook have been exercised.
+For an incident, first activate the emergency stop, then call
+`POST /api/cubelic/media/:assetId/quarantine` with named-human approval proof.
+The route writes intent and completion audits around R2 deletion; the immutable
+D1 mapping remains as evidence and all later delivery attempts fail closed.
+The production preflight refuses media activation while this evidence is false.
+The first staging proof uses `CUBELIC_PHASE3_MEDIA_SMOKE_MODE=true` only with
+`ENVIRONMENT=staging` and `staging_fake` delivery. Turn it off immediately
+after the proof; production rejects this mode.
+The existing publish/schedule routes revalidate the immutable D1/R2 mapping
+before any X upload.
 
 ## Emergency controls
 

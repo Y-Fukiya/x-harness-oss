@@ -53,6 +53,20 @@ export const cubelicToolDefs = [
     inputSchema: { type: 'object' as const, properties: { draftId: { type: 'string' } }, required: ['draftId'], additionalProperties: false },
   },
   {
+    name: 'cubelic_schedule_draft',
+    description: '人間が承認済みの下書きを、許可済みカテゴリ・テンプレートの範囲で予約する。承認や即時投稿は行わない。',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        draftId: { type: 'string' },
+        scheduledAt: { type: 'string', description: 'タイムゾーンを含むISO 8601形式' },
+        policyId: { type: 'string', description: '下書きの承認済みtemplate_idと同じ値' },
+      },
+      required: ['draftId', 'scheduledAt', 'policyId'],
+      additionalProperties: false,
+    },
+  },
+  {
     name: 'cubelic_collect_metrics',
     description: '公開済み投稿の指定時点メトリクスを取得する。取得不能値はnullのまま保存する。',
     inputSchema: {

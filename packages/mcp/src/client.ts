@@ -5,11 +5,13 @@ export class XHarnessClient {
   ) {}
 
   async request<T>(method: string, path: string, body?: unknown): Promise<T> {
+    const correlationId = `hermes:${crypto.randomUUID()}`;
     const res = await fetch(`${this.apiUrl}${path}`, {
       method,
       headers: {
         'Authorization': `Bearer ${this.apiKey}`,
         'Content-Type': 'application/json',
+        'X-Correlation-Id': correlationId,
       },
       body: body ? JSON.stringify(body) : undefined,
     });

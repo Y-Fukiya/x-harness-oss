@@ -431,6 +431,82 @@ export async function findCubelicMediaByHash(db: D1Database, sha256: string): Pr
   return row ? mapMedia(row) : null;
 }
 
+export interface CubelicMediaObject {
+  assetId: string;
+  r2Key: string;
+  sha256: string;
+  contentType: 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif' | 'video/mp4';
+  byteSize: number;
+  stagedBy: string;
+  stagedAt: string;
+}
+
+interface MediaObjectRow {
+  asset_id: string;
+  r2_key: string;
+  sha256: string;
+  content_type: CubelicMediaObject['contentType'];
+  byte_size: number;
+  staged_by: string;
+  staged_at: string;
+}
+
+function mapMediaObject(row: MediaObjectRow): CubelicMediaObject {
+  return {
+    assetId: row.asset_id,
+    r2Key: row.r2_key,
+    sha256: row.sha256,
+    contentType: row.content_type,
+    byteSize: row.byte_size,
+    stagedBy: row.staged_by,
+    stagedAt: row.staged_at,
+  };
+}
+
+export async function getCubelicMediaObject(
+  db: D1Database,
+  assetId: string,
+): Promise<CubelicMediaObject | null> {
+  const row = await db.prepare(
+    'SELECT asset_id, r2_key, sha256, content_type, byte_size, staged_by, staged_at FROM cubelic_media_objects WHERE asset_id = ?',
+  ).bind(assetId).first<MediaObjectRow>();
+  return row ? mapMediaObject(row) : null;
+}
+
+export async function stageCubelicMediaObject(
+  db: D1Database,
+  input: Omit<CubelicMediaObject, 'stagedAt'>,
+  audit: AuditInput,
+): Promise<CubelicMediaObject> {
+  const existing = await getCubelicMediaObject(db, input.assetId);
+  if (existing) {
+    if (
+      existing.r2Key === input.r2Key
+      && existing.sha256 === input.sha256
+      && existing.contentType === input.contentType
+      && existing.byteSize === input.byteSize
+      && existing.stagedBy === input.stagedBy
+    ) return existing;
+    throw new Error('Media asset is already staged with different immutable metadata');
+  }
+  const stagedAt = nowIso();
+  const statement = db.prepare(
+    `INSERT INTO cubelic_media_objects (
+      asset_id, r2_key, sha256, content_type, byte_size, staged_by, staged_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+  ).bind(
+    input.assetId,
+    input.r2Key,
+    input.sha256,
+    input.contentType,
+    input.byteSize,
+    input.stagedBy,
+    stagedAt,
+  );
+  await runCubelicMutation(db, [statement], [audit]);
+  return { ...input, stagedAt };
+}
+
 export async function createCubelicMedia(
   db: D1Database,
   asset: MediaAsset,
