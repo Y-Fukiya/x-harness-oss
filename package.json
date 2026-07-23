@@ -23,6 +23,7 @@
     "check:boundaries": "node scripts/check-phase1-boundaries.mjs",
     "check:config": "node scripts/check-config-sync.mjs",
     "security:scan": "node scripts/check-no-secrets.mjs",
+    "security:dependencies": "node scripts/check-osv-lockfile.mjs",
     "preflight:production": "node scripts/preflight-production.mjs",
     "smoke:staging": "node scripts/smoke-staging.mjs",
     "validate:production-inputs": "pnpm --filter @x-harness/schemas validate:inputs",
@@ -34,17 +35,18 @@
   },
   "packageManager": "pnpm@10.34.5",
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "pnpm": {
     "overrides": {
       "@hono/node-server": "2.0.11",
+      "esbuild": "0.28.1",
       "postcss": "8.5.10",
       "sharp": "0.35.3"
     }
   },
   "devDependencies": {
-    "miniflare": "3.20250718.3",
+    "miniflare": "4.20260721.0",
     "typescript": "^5.9.3",
     "vitest": "4.1.2"
   },

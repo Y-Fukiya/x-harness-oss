@@ -52,8 +52,9 @@ engagementGates.post('/api/engagement-gates', async (c) => {
   if (!body.xAccountId || !body.postId || !body.triggerType || !body.actionType) {
     return c.json({ success: false, error: 'Missing required fields: xAccountId, postId, triggerType, actionType' }, 400);
   }
+  delete body.lineHarnessApiKey;
   if (body.template === undefined) body.template = '';
-  const gate = await createEngagementGate(c.env.DB, body);
+  const gate = await createEngagementGate(c.env.DB, body, c.env.CREDENTIAL_ENCRYPTION_KEY);
   return c.json({ success: true, data: serialize(gate) }, 201);
 });
 
@@ -61,19 +62,20 @@ engagementGates.get('/api/engagement-gates', async (c) => {
   const xAccountId = c.req.query('xAccountId');
   const gates = await getEngagementGates(c.env.DB, {
     ...(xAccountId ? { xAccountId } : {}),
-  });
+  }, c.env.CREDENTIAL_ENCRYPTION_KEY);
   return c.json({ success: true, data: gates.map(serialize) });
 });
 
 engagementGates.get('/api/engagement-gates/:id', async (c) => {
-  const gate = await getEngagementGateById(c.env.DB, c.req.param('id'));
+  const gate = await getEngagementGateById(c.env.DB, c.req.param('id'), c.env.CREDENTIAL_ENCRYPTION_KEY);
   if (!gate) return c.json({ success: false, error: 'Not found' }, 404);
   return c.json({ success: true, data: serialize(gate) });
 });
 
 engagementGates.put('/api/engagement-gates/:id', async (c) => {
   const body = await c.req.json();
-  const gate = await updateEngagementGate(c.env.DB, c.req.param('id'), body);
+  delete body.lineHarnessApiKey;
+  const gate = await updateEngagementGate(c.env.DB, c.req.param('id'), body, c.env.CREDENTIAL_ENCRYPTION_KEY);
   if (!gate) return c.json({ success: false, error: 'Not found' }, 404);
   return c.json({ success: true, data: serialize(gate) });
 });
@@ -94,7 +96,7 @@ engagementGates.get('/api/engagement-gates/:id/deliveries', async (c) => {
 // get_gate_analytics tool.
 engagementGates.get('/api/engagement-gates/:id/analytics', async (c) => {
   const gateId = c.req.param('id');
-  const gate = await getEngagementGateById(c.env.DB, gateId);
+  const gate = await getEngagementGateById(c.env.DB, gateId, c.env.CREDENTIAL_ENCRYPTION_KEY);
   if (!gate) return c.json({ success: false, error: 'Not found' }, 404);
 
   const byStatusRows = await c.env.DB
@@ -136,7 +138,7 @@ engagementGates.post('/api/engagement-gates/process', async (c) => {
   const { XClient } = await import('@x-harness/x-sdk');
   const { getXAccounts } = await import('@x-harness/db');
   const { processEngagementGates } = await import('../services/engagement-gate.js');
-  const accounts = await getXAccounts(c.env.DB);
+  const accounts = await getXAccounts(c.env.DB, c.env.CREDENTIAL_ENCRYPTION_KEY);
   const results: any[] = [];
   for (const account of accounts) {
     try {
@@ -149,7 +151,14 @@ engagementGates.post('/api/engagement-gates/process', async (c) => {
             accessTokenSecret: account.access_token_secret,
           })
         : new XClient(account.access_token);
-      await processEngagementGates(c.env.DB, xClient, account.id, true);
+      await processEngagementGates(
+        c.env.DB,
+        xClient,
+        account.id,
+        true,
+        undefined,
+        c.env.CREDENTIAL_ENCRYPTION_KEY,
+      );
       results.push({ account: account.username, status: 'ok' });
     } catch (err: any) {
       results.push({ account: account.username, status: 'error', error: err.message });

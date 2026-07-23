@@ -38,9 +38,9 @@ dm.get('/api/dm/conversations', async (c) => {
   const cursor = c.req.query('cursor');
   let account;
   if (xAccountId) {
-    account = await getXAccountById(c.env.DB, xAccountId);
+    account = await getXAccountById(c.env.DB, xAccountId, c.env.CREDENTIAL_ENCRYPTION_KEY);
   } else {
-    const accounts = await getXAccounts(c.env.DB);
+    const accounts = await getXAccounts(c.env.DB, c.env.CREDENTIAL_ENCRYPTION_KEY);
     account = accounts[0] ?? null;
   }
   if (!account) return c.json({ success: false, error: 'X account not found' }, 404);
@@ -114,9 +114,9 @@ dm.get('/api/dm/conversations/:conversationId/messages', async (c) => {
   const cursor = c.req.query('cursor');
   let account;
   if (xAccountId) {
-    account = await getXAccountById(c.env.DB, xAccountId);
+    account = await getXAccountById(c.env.DB, xAccountId, c.env.CREDENTIAL_ENCRYPTION_KEY);
   } else {
-    const accounts = await getXAccounts(c.env.DB);
+    const accounts = await getXAccounts(c.env.DB, c.env.CREDENTIAL_ENCRYPTION_KEY);
     account = accounts[0] ?? null;
   }
   if (!account) return c.json({ success: false, error: 'X account not found' }, 404);
@@ -162,9 +162,9 @@ dm.post('/api/dm/send', async (c) => {
   }
   let account;
   if (xAccountId) {
-    account = await getXAccountById(c.env.DB, xAccountId);
+    account = await getXAccountById(c.env.DB, xAccountId, c.env.CREDENTIAL_ENCRYPTION_KEY);
   } else {
-    const accounts = await getXAccounts(c.env.DB);
+    const accounts = await getXAccounts(c.env.DB, c.env.CREDENTIAL_ENCRYPTION_KEY);
     account = accounts[0] ?? null;
   }
   if (!account) return c.json({ success: false, error: 'X account not found' }, 404);

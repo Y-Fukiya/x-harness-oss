@@ -86,7 +86,7 @@ export async function appendCubelicAudit(db: D1Database, input: AuditInput): Pro
 
 export async function bootstrapCubelicOperator(
   db: D1Database,
-  input: { name: string; apiKey: string },
+  input: { name: string; apiKey: string; apiKeyHash: string },
   audit: AuditInput,
 ): Promise<{ id: string; name: string; role: 'admin'; apiKey: string } | null> {
   const id = crypto.randomUUID();
@@ -101,13 +101,13 @@ export async function bootstrapCubelicOperator(
      AND NOT EXISTS (SELECT 1 FROM staff_members WHERE is_active = 1)`,
   ).bind(bootstrapToken, timestamp, input.name);
   const insert = db.prepare(
-    `INSERT INTO staff_members (id, name, role, api_key, created_at, updated_at)
-     SELECT ?, ?, 'admin', ?, ?, ?
+    `INSERT INTO staff_members (id, name, role, api_key, api_key_hash, created_at, updated_at)
+     SELECT ?, ?, 'admin', ?, ?, ?, ?
      WHERE EXISTS (
        SELECT 1 FROM cubelic_system_flags
        WHERE key = 'operator_bootstrap_consumed' AND value = ?
      )`,
-  ).bind(id, input.name, input.apiKey, timestamp, timestamp, bootstrapToken);
+  ).bind(id, input.name, `migrated_${crypto.randomUUID()}`, input.apiKeyHash, timestamp, timestamp, bootstrapToken);
   const conditionalAudit = db.prepare(
     `INSERT INTO cubelic_audit_logs (
       audit_id, actor, action, entity_type, entity_id, before_json, after_json,

@@ -83,7 +83,7 @@ followers.get('/api/users/search', async (c) => {
     }
 
     const { XClient } = await import('@x-harness/x-sdk');
-    const accounts = await getXAccounts(c.env.DB);
+    const accounts = await getXAccounts(c.env.DB, c.env.CREDENTIAL_ENCRYPTION_KEY);
     const account = accounts[0] ?? null;
     if (!account) {
       return c.json({ success: true, data: [] as FollowerSearchResult[] });

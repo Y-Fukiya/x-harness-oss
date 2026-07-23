@@ -31,6 +31,8 @@ describe('CUBΣLIC centralized Phase 1 route boundary', () => {
     expect(isPhase1RouteBlocked('OPTIONS', '/api/posts', env())).toBe(false);
     expect(isPhase1RouteBlocked('GET', '/api/health', env())).toBe(false);
     expect(isPhase1RouteBlocked('GET', '/api/session', env())).toBe(false);
+    expect(isPhase1RouteBlocked('POST', '/api/session/login', env())).toBe(false);
+    expect(isPhase1RouteBlocked('DELETE', '/api/session', env())).toBe(false);
     expect(isPhase1RouteBlocked('GET', '/api/capabilities', env())).toBe(false);
     expect(isPhase1RouteBlocked('GET', '/api/x-accounts', env())).toBe(false);
     expect(isPhase1RouteBlocked('PUT', '/api/x-accounts/account_1', env())).toBe(true);

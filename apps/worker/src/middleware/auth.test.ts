@@ -3,6 +3,21 @@ import { describe, expect, it } from 'vitest';
 import { authMiddleware } from './auth.js';
 import type { Env } from '../index.js';
 
+const db = {
+  prepare: () => ({
+    bind: () => ({ first: async () => null }),
+    first: async () => null,
+  }),
+  batch: async () => [],
+} as unknown as D1Database;
+
+const secureBindings = {
+  DB: db,
+  API_KEY: 'dashboard-api-key-with-at-least-32-bytes',
+  CREDENTIAL_ENCRYPTION_KEY: 'MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY',
+  CREDENTIAL_ENCRYPTION_KEY_VERSION: 'test-v1',
+} as Env['Bindings'];
+
 function app() {
   const value = new Hono<Env>();
   value.use('*', authMiddleware);
@@ -18,10 +33,11 @@ describe('Phase 3 Hermes authentication boundary', () => {
       'https://worker.test/api/cubelic/drafts/drf_1/schedule',
       {
         method: 'POST',
-        headers: { Authorization: 'Bearer hermes-secret' },
+        headers: { Authorization: 'Bearer hermes-secret-with-at-least-32-bytes' },
       },
       {
-        HERMES_ACCESS_TOKEN: 'hermes-secret',
+        ...secureBindings,
+        HERMES_ACCESS_TOKEN: 'hermes-secret-with-at-least-32-bytes',
         CUBELIC_PHASE3_ENABLED: 'true',
         PHASE3_RELEASE_APPROVED: 'true',
         STAGING_PHASE3_SMOKE_VERIFIED: 'true',
@@ -36,14 +52,33 @@ describe('Phase 3 Hermes authentication boundary', () => {
       'https://worker.test/api/cubelic/drafts/drf_1/schedule',
       {
         method: 'POST',
-        headers: { Authorization: 'Bearer hermes-secret' },
+        headers: { Authorization: 'Bearer hermes-secret-with-at-least-32-bytes' },
       },
       {
-        HERMES_ACCESS_TOKEN: 'hermes-secret',
+        ...secureBindings,
+        HERMES_ACCESS_TOKEN: 'hermes-secret-with-at-least-32-bytes',
         CUBELIC_PHASE3_ENABLED: 'true',
         PHASE3_RELEASE_APPROVED: 'true',
       } as Env['Bindings'],
     );
     expect(response.status).toBe(403);
+  });
+
+  it('fails closed when the Hermes bearer secret is too short', async () => {
+    const response = await app().request(
+      'https://worker.test/api/cubelic/drafts/drf_1/schedule',
+      {
+        method: 'POST',
+        headers: { Authorization: 'Bearer short-hermes' },
+      },
+      {
+        ...secureBindings,
+        HERMES_ACCESS_TOKEN: 'short-hermes',
+        CUBELIC_PHASE3_ENABLED: 'true',
+        PHASE3_RELEASE_APPROVED: 'true',
+        STAGING_PHASE3_SMOKE_VERIFIED: 'true',
+      } as Env['Bindings'],
+    );
+    expect(response.status).toBe(503);
   });
 });

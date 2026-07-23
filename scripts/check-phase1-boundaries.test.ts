@@ -51,4 +51,37 @@ CUBELIC_PHASE3_SCHEDULE_POLICIES = "event_notice:event_notice_manual_v1"
       'apps/worker/wrangler.toml: env.staging staging_fake delivery requires the exact dedicated staging Worker URL',
     ]);
   });
+
+  it('rejects a production Worker that exposes default origins or lacks a custom API domain', () => {
+    const violations = validateWranglerBoundaries(`
+[env.production]
+workers_dev = true
+
+[env.production.vars]
+WORKER_URL = "https://api.example.com"
+CUBELIC_SAFE_MODE = "true"
+CUBELIC_PHASE3_ENABLED = "true"
+GLOBAL_PUBLISHING_DISABLED = "false"
+CUBELIC_PHASE3_DELIVERY_MODE = "x"
+PHASE3_RELEASE_APPROVED = "true"
+STAGING_PHASE3_SMOKE_VERIFIED = "true"
+CUBELIC_PHASE3_SCHEDULE_POLICIES = "event_notice:event_notice_manual_v1"
+`);
+
+    expect(violations).toContain(
+      'apps/worker/wrangler.toml: env.production must disable workers.dev',
+    );
+    expect(violations).toContain(
+      'apps/worker/wrangler.toml: env.production must disable preview URLs',
+    );
+    expect(violations).toContain(
+      'apps/worker/wrangler.toml: env.production must configure one custom API domain',
+    );
+    expect(violations).toContain(
+      'apps/worker/wrangler.toml: env.production must bind AUTH_RATE_LIMITER',
+    );
+    expect(violations).toContain(
+      'apps/worker/wrangler.toml: env.production must bind PUBLIC_ACTION_RATE_LIMITER',
+    );
+  });
 });

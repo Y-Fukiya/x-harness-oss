@@ -8,6 +8,10 @@ const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const productionEnvironment = {
   API_KEY: 'a'.repeat(32),
   HUMAN_APPROVAL_KEY: 'b'.repeat(32),
+  SESSION_SIGNING_KEY: 'c'.repeat(32),
+  STAFF_KEY_PEPPER: 'd'.repeat(32),
+  CREDENTIAL_ENCRYPTION_KEY: 'MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY',
+  CREDENTIAL_ENCRYPTION_KEY_VERSION: '2026-07-23-v1',
   CLOUDFLARE_AUTH_VERIFIED: 'true',
   X_HARNESS_ACCOUNT_ID: '89f9bfc0-428c-480b-9cb3-9ba1698c30da',
   CUBELIC_SAFE_MODE: 'true',
@@ -54,7 +58,30 @@ describe('production preflight phase boundaries', () => {
     expect(missing.status).toBe(1);
     expect(missing.stderr).toContain('missing secret environment variable: HERMES_ACCESS_TOKEN');
     expect(reused.status).toBe(1);
-    expect(reused.stderr).toContain('API_KEY, HUMAN_APPROVAL_KEY, HERMES_ACCESS_TOKEN must be distinct');
+    expect(reused.stderr).toContain('must be distinct');
+  });
+
+  it('requires strong and distinct dashboard credential-protection keys', () => {
+    const missing = preflight({ SESSION_SIGNING_KEY: '' });
+    const short = preflight({ STAFF_KEY_PEPPER: 'short' });
+    const reused = preflight({ SESSION_SIGNING_KEY: productionEnvironment.API_KEY });
+    const invalidEncryptionKey = preflight({ CREDENTIAL_ENCRYPTION_KEY: 'e'.repeat(32) });
+
+    expect(missing.stderr).toContain('missing secret environment variable: SESSION_SIGNING_KEY');
+    expect(short.stderr).toContain('STAFF_KEY_PEPPER is shorter');
+    expect(reused.stderr).toContain('must be distinct');
+    expect(invalidEncryptionKey.stderr).toContain(
+      'CREDENTIAL_ENCRYPTION_KEY must be a base64url-encoded 32-byte key',
+    );
+  });
+
+  it('requires the credential key version to match the deployed production config', () => {
+    const result = preflight({ CREDENTIAL_ENCRYPTION_KEY_VERSION: '2026-07-23-v2' });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(
+      'wrangler production CREDENTIAL_ENCRYPTION_KEY_VERSION does not match',
+    );
   });
 
   it('requires real input validation only when production content ingestion is enabled', () => {

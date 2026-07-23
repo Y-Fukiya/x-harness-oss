@@ -4,6 +4,8 @@ import type { Env } from '../index.js';
 const PHASE_1_EXACT_ROUTES = new Set([
   'GET /api/health',
   'GET /api/session',
+  'POST /api/session/login',
+  'DELETE /api/session',
   'GET /api/capabilities',
   'GET /api/x-accounts',
 ]);

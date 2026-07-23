@@ -18,6 +18,8 @@ function serialize(a: any) {
 }
 
 xAccounts.post('/api/x-accounts', async (c) => {
+  const denied = requireRole(c, 'admin');
+  if (denied) return denied;
   const body = await c.req.json<{
     xUserId: string;
     username: string;
@@ -31,14 +33,31 @@ xAccounts.post('/api/x-accounts', async (c) => {
   if (!body.xUserId || !body.username || !body.accessToken) {
     return c.json({ success: false, error: 'Missing required fields' }, 400);
   }
-  const account = await createXAccount(c.env.DB, body);
+  const account = await createXAccount(c.env.DB, body, c.env.CREDENTIAL_ENCRYPTION_KEY, {
+    actor: 'human',
+    action: 'x_account.created',
+    entityType: 'x_account',
+    entityId: '',
+    before: {},
+    after: {
+      authMode: body.consumerKey && body.consumerSecret && body.accessTokenSecret
+        ? 'oauth1_user_context'
+        : 'bearer',
+      active: true,
+    },
+    correlationId: c.req.header('X-Correlation-Id') ?? crypto.randomUUID(),
+  });
   return c.json({ success: true, data: serialize(account) }, 201);
 });
 
 xAccounts.get('/api/x-accounts', async (c) => {
   const result = await c.env.DB.prepare('SELECT * FROM x_accounts ORDER BY created_at').all<any>();
 
-  const activeGates = await getEngagementGates(c.env.DB, { activeOnly: true });
+  const activeGates = await getEngagementGates(
+    c.env.DB,
+    { activeOnly: true },
+    c.env.CREDENTIAL_ENCRYPTION_KEY,
+  );
   const totalApiCalls = activeGates.reduce((sum, g) => sum + (g.api_calls_total ?? 0), 0);
 
   return c.json({
@@ -71,7 +90,7 @@ xAccounts.put('/api/x-accounts/:id', async (c) => {
     accessTokenSecret?: string;
     isActive?: boolean;
   }>();
-  const existing = await getXAccountById(c.env.DB, c.req.param('id'));
+  const existing = await getXAccountById(c.env.DB, c.req.param('id'), c.env.CREDENTIAL_ENCRYPTION_KEY);
   if (!existing) return c.json({ success: false, error: 'Not found' }, 404);
   const nextConsumerKey = body.consumerKey ?? existing.consumer_key;
   const nextConsumerSecret = body.consumerSecret ?? existing.consumer_secret;
@@ -94,13 +113,13 @@ xAccounts.put('/api/x-accounts/:id', async (c) => {
       active: body.isActive ?? !!existing.is_active,
     },
     correlationId: c.req.header('X-Correlation-Id') ?? `x-account-credentials:${crypto.randomUUID()}`,
-  });
+  }, c.env.CREDENTIAL_ENCRYPTION_KEY);
   return c.json({ success: true });
 });
 
 xAccounts.get('/api/x-accounts/:id/stats', async (c) => {
   const id = c.req.param('id');
-  const existing = await getXAccountById(c.env.DB, id);
+  const existing = await getXAccountById(c.env.DB, id, c.env.CREDENTIAL_ENCRYPTION_KEY);
   if (!existing) return c.json({ success: false, error: 'Not found' }, 404);
 
   const snapshots = await getSnapshots(c.env.DB, id, 30);
@@ -141,7 +160,7 @@ xAccounts.get('/api/x-accounts/:id/stats', async (c) => {
 // POST /api/x-accounts/:id/snapshot — manually record a follower snapshot
 xAccounts.post('/api/x-accounts/:id/snapshot', async (c) => {
   const id = c.req.param('id');
-  const account = await getXAccountById(c.env.DB, id);
+  const account = await getXAccountById(c.env.DB, id, c.env.CREDENTIAL_ENCRYPTION_KEY);
   if (!account) return c.json({ success: false, error: 'Not found' }, 404);
 
   const already = await hasSnapshotForToday(c.env.DB, id);

@@ -1,4 +1,10 @@
 import { jstNow } from './utils.js';
+import {
+  decryptCredential,
+  encryptCredential,
+  isEncryptedCredential,
+} from './credential-crypto.js';
+import { securityAuditStatement } from './audit.js';
 
 export interface DbEngagementGate {
   id: string;
@@ -65,7 +71,11 @@ export interface CreateGateInput {
   replyKeyword?: string;
 }
 
-export async function createEngagementGate(db: D1Database, input: CreateGateInput): Promise<DbEngagementGate> {
+export async function createEngagementGate(
+  db: D1Database,
+  input: CreateGateInput,
+  encryptionKey?: string,
+): Promise<DbEngagementGate> {
   const id = crypto.randomUUID();
   const now = jstNow();
   const strategy = input.pollingStrategy ?? 'hot_window';
@@ -79,18 +89,48 @@ export async function createEngagementGate(db: D1Database, input: CreateGateInpu
 
   const nextPollAt = strategy === 'manual' ? null : now;
 
+  if (input.lineHarnessApiKey && !encryptionKey) {
+    throw new Error('Credential encryption key is required');
+  }
+  const storedLineApiKey = input.lineHarnessApiKey
+    ? await encryptCredential(
+      input.lineHarnessApiKey,
+      encryptionKey!,
+      'engagement_gates.line_harness_api_key',
+    )
+    : null;
   const result = await db
     .prepare(`
       INSERT INTO engagement_gates (id, x_account_id, post_id, trigger_type, action_type, template, link, line_harness_url, line_harness_api_key, line_harness_tag, line_harness_scenario_id, lottery_enabled, lottery_rate, lottery_win_template, lottery_lose_template, polling_strategy, expires_at, next_poll_at, api_calls_total, require_like, require_repost, require_follow, reply_keyword, created_at, updated_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?)
       RETURNING *
     `)
-    .bind(id, input.xAccountId, input.postId, input.triggerType, input.actionType, input.template, input.link ?? null, input.lineHarnessUrl ?? null, input.lineHarnessApiKey ?? null, input.lineHarnessTag ?? null, input.lineHarnessScenarioId ?? null, input.lotteryEnabled ? 1 : 0, input.lotteryRate ?? 100, input.lotteryWinTemplate ?? null, input.lotteryLoseTemplate ?? null, strategy, expiresAt, nextPollAt, input.requireLike ? 1 : 0, input.requireRepost ? 1 : 0, input.requireFollow ? 1 : 0, input.replyKeyword ?? null, now, now)
+    .bind(id, input.xAccountId, input.postId, input.triggerType, input.actionType, input.template, input.link ?? null, input.lineHarnessUrl ?? null, storedLineApiKey, input.lineHarnessTag ?? null, input.lineHarnessScenarioId ?? null, input.lotteryEnabled ? 1 : 0, input.lotteryRate ?? 100, input.lotteryWinTemplate ?? null, input.lotteryLoseTemplate ?? null, strategy, expiresAt, nextPollAt, input.requireLike ? 1 : 0, input.requireRepost ? 1 : 0, input.requireFollow ? 1 : 0, input.replyKeyword ?? null, now, now)
     .first<DbEngagementGate>();
   return result!;
 }
 
-export async function getEngagementGates(db: D1Database, opts: { activeOnly?: boolean; xAccountId?: string } = {}): Promise<DbEngagementGate[]> {
+async function decryptGateCredential(
+  _db: D1Database,
+  gate: DbEngagementGate,
+  encryptionKey?: string,
+): Promise<DbEngagementGate> {
+  if (!gate.line_harness_api_key || !encryptionKey) return gate;
+  return {
+    ...gate,
+    line_harness_api_key: await decryptCredential(
+      gate.line_harness_api_key,
+      encryptionKey,
+      'engagement_gates.line_harness_api_key',
+    ),
+  };
+}
+
+export async function getEngagementGates(
+  db: D1Database,
+  opts: { activeOnly?: boolean; xAccountId?: string } = {},
+  encryptionKey?: string,
+): Promise<DbEngagementGate[]> {
   const conditions: string[] = [];
   const bindings: string[] = [];
   if (opts.activeOnly) {
@@ -105,14 +145,24 @@ export async function getEngagementGates(db: D1Database, opts: { activeOnly?: bo
     .prepare(`SELECT * FROM engagement_gates ${where} ORDER BY created_at DESC`)
     .bind(...bindings)
     .all<DbEngagementGate>();
-  return result.results;
+  return Promise.all(result.results.map((gate) => decryptGateCredential(db, gate, encryptionKey)));
 }
 
-export async function getEngagementGateById(db: D1Database, id: string): Promise<DbEngagementGate | null> {
-  return db.prepare('SELECT * FROM engagement_gates WHERE id = ?').bind(id).first<DbEngagementGate>();
+export async function getEngagementGateById(
+  db: D1Database,
+  id: string,
+  encryptionKey?: string,
+): Promise<DbEngagementGate | null> {
+  const gate = await db.prepare('SELECT * FROM engagement_gates WHERE id = ?').bind(id).first<DbEngagementGate>();
+  return gate ? decryptGateCredential(db, gate, encryptionKey) : null;
 }
 
-export async function updateEngagementGate(db: D1Database, id: string, updates: Partial<CreateGateInput & { isActive: boolean }>): Promise<DbEngagementGate | null> {
+export async function updateEngagementGate(
+  db: D1Database,
+  id: string,
+  updates: Partial<CreateGateInput & { isActive: boolean }>,
+  encryptionKey?: string,
+): Promise<DbEngagementGate | null> {
   const existing = await getEngagementGateById(db, id);
   if (!existing) return null;
   const now = jstNow();
@@ -136,6 +186,16 @@ export async function updateEngagementGate(db: D1Database, id: string, updates: 
   }
 
   const isReactivating = updates.isActive === true && !existing.is_active;
+  if (updates.lineHarnessApiKey !== undefined && !encryptionKey) {
+    throw new Error('Credential encryption key is required');
+  }
+  const storedLineApiKey = updates.lineHarnessApiKey !== undefined
+    ? await encryptCredential(
+      updates.lineHarnessApiKey,
+      encryptionKey!,
+      'engagement_gates.line_harness_api_key',
+    )
+    : existing.line_harness_api_key;
 
   // When reactivating an expired gate, refresh expires_at so it doesn't
   // immediately get deactivated again by isExpired()
@@ -170,7 +230,7 @@ export async function updateEngagementGate(db: D1Database, id: string, updates: 
       updates.link ?? existing.link,
       updates.isActive !== undefined ? (updates.isActive ? 1 : 0) : existing.is_active,
       updates.lineHarnessUrl ?? existing.line_harness_url,
-      updates.lineHarnessApiKey ?? existing.line_harness_api_key,
+      storedLineApiKey,
       updates.lineHarnessTag ?? existing.line_harness_tag,
       updates.lineHarnessScenarioId ?? existing.line_harness_scenario_id,
       updates.lotteryEnabled !== undefined ? (updates.lotteryEnabled ? 1 : 0) : existing.lottery_enabled,
@@ -188,6 +248,41 @@ export async function updateEngagementGate(db: D1Database, id: string, updates: 
     )
     .first<DbEngagementGate>();
   return result;
+}
+
+export async function migrateEngagementGateApiKeys(
+  db: D1Database,
+  encryptionKey: string,
+): Promise<number> {
+  const rows = await db.prepare(
+    'SELECT id, line_harness_api_key FROM engagement_gates WHERE line_harness_api_key IS NOT NULL',
+  ).all<{ id: string; line_harness_api_key: string }>();
+  const legacy = rows.results.filter((row) => !isEncryptedCredential(row.line_harness_api_key));
+  if (legacy.length === 0) return 0;
+  const statements = (await Promise.all(legacy.map(async (row) => [
+    db.prepare(
+      'UPDATE engagement_gates SET line_harness_api_key = ? WHERE id = ? AND line_harness_api_key = ?',
+    ).bind(
+      await encryptCredential(
+        row.line_harness_api_key,
+        encryptionKey,
+        'engagement_gates.line_harness_api_key',
+      ),
+      row.id,
+      row.line_harness_api_key,
+    ),
+    securityAuditStatement(db, {
+      actor: 'system',
+      action: 'credential_storage.migrated',
+      entityType: 'engagement_gate',
+      entityId: row.id,
+      before: { storage: 'legacy_plaintext' },
+      after: { storage: 'aes_gcm_v1' },
+      correlationId: `credential-migration:${crypto.randomUUID()}`,
+    }),
+  ]))).flat();
+  await db.batch(statements);
+  return legacy.length;
 }
 
 export async function deleteEngagementGate(db: D1Database, id: string): Promise<void> {

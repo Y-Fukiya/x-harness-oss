@@ -8,7 +8,7 @@ interface LineConnection {
   id: string
   name: string
   worker_url: string
-  api_key?: string
+  has_api_key: boolean
   created_at: string
 }
 
@@ -91,18 +91,13 @@ export default function SettingsPage() {
   const handleTest = async (conn: LineConnection) => {
     setTestResults(prev => ({ ...prev, [conn.id]: '...' }))
     try {
-      // Need to fetch full connection with api_key
-      const full = await fetchApi<{ success: boolean; data: LineConnection }>(`/api/line-connections/${conn.id}`)
-      if (!full.success || !full.data.api_key) {
-        setTestResults(prev => ({ ...prev, [conn.id]: '❌ API Key が取得できません' }))
-        return
-      }
-      const res = await fetch(`${conn.worker_url}/api/friends?limit=1`, {
-        headers: { Authorization: `Bearer ${full.data.api_key}` },
-      })
+      const res = await fetchApi<{ success: boolean; data: { status: number } }>(
+        `/api/line-connections/${conn.id}/test`,
+        { method: 'POST' },
+      )
       setTestResults(prev => ({
         ...prev,
-        [conn.id]: res.ok ? '✅ 接続OK' : `❌ ${res.status}`,
+        [conn.id]: res.success ? '✅ 接続OK' : `❌ ${res.data.status}`,
       }))
     } catch (err) {
       setTestResults(prev => ({ ...prev, [conn.id]: `❌ ${err}` }))

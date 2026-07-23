@@ -8,7 +8,13 @@ const hermesRuntimeEnabled = process.env.HERMES_RUNTIME_ENABLED === 'true';
 const productionContentIngestEnabled = process.env.PRODUCTION_CONTENT_INGEST_ENABLED === 'true';
 const cloudflareAuthVerified = process.env.CLOUDFLARE_AUTH_VERIFIED === 'true';
 const phase3Enabled = process.env.CUBELIC_PHASE3_ENABLED === 'true';
-const requiredSecrets = ['API_KEY', 'HUMAN_APPROVAL_KEY'];
+const requiredSecrets = [
+  'API_KEY',
+  'HUMAN_APPROVAL_KEY',
+  'SESSION_SIGNING_KEY',
+  'STAFF_KEY_PEPPER',
+  'CREDENTIAL_ENCRYPTION_KEY',
+];
 if (hermesRuntimeEnabled) requiredSecrets.push('HERMES_ACCESS_TOKEN');
 
 for (const name of ['HERMES_RUNTIME_ENABLED', 'PRODUCTION_CONTENT_INGEST_ENABLED', 'PRODUCTION_INPUTS_VALIDATED', 'PRODUCTION_LP_MAPPING_VALIDATED', 'CLOUDFLARE_AUTH_VERIFIED', 'CUBELIC_PHASE3_ENABLED', 'PHASE3_RELEASE_APPROVED', 'STAGING_PHASE3_SMOKE_VERIFIED']) {
@@ -21,13 +27,34 @@ for (const name of requiredSecrets) {
   if (!process.env[name]) errors.push(`missing secret environment variable: ${name}`);
   else if (process.env[name].length < 32) errors.push(`${name} is shorter than the 32-character production minimum`);
 }
+if (process.env.CREDENTIAL_ENCRYPTION_KEY) {
+  try {
+    if (
+      !/^[A-Za-z0-9_-]+$/u.test(process.env.CREDENTIAL_ENCRYPTION_KEY)
+      || Buffer.from(process.env.CREDENTIAL_ENCRYPTION_KEY, 'base64url').byteLength !== 32
+    ) {
+      errors.push('CREDENTIAL_ENCRYPTION_KEY must be a base64url-encoded 32-byte key');
+    }
+  } catch {
+    errors.push('CREDENTIAL_ENCRYPTION_KEY must be a base64url-encoded 32-byte key');
+  }
+}
+if (!/^[A-Za-z0-9][A-Za-z0-9._-]{2,63}$/u.test(process.env.CREDENTIAL_ENCRYPTION_KEY_VERSION ?? '')) {
+  errors.push('CREDENTIAL_ENCRYPTION_KEY_VERSION must be an explicit version identifier');
+}
 if (process.env.CLOUDFLARE_API_TOKEN && process.env.CLOUDFLARE_API_TOKEN.length < 32) {
   errors.push('CLOUDFLARE_API_TOKEN is shorter than the 32-character production minimum');
 }
 if (!process.env.CLOUDFLARE_API_TOKEN && !cloudflareAuthVerified) {
   errors.push('set a least-privilege CLOUDFLARE_API_TOKEN or set CLOUDFLARE_AUTH_VERIFIED=true after wrangler whoami succeeds');
 }
-const authorizationSecretNames = ['API_KEY', 'HUMAN_APPROVAL_KEY'];
+const authorizationSecretNames = [
+  'API_KEY',
+  'HUMAN_APPROVAL_KEY',
+  'SESSION_SIGNING_KEY',
+  'STAFF_KEY_PEPPER',
+  'CREDENTIAL_ENCRYPTION_KEY',
+];
 if (hermesRuntimeEnabled) authorizationSecretNames.push('HERMES_ACCESS_TOKEN');
 const authorizationSecrets = authorizationSecretNames.map((name) => process.env[name]).filter(Boolean);
 if (new Set(authorizationSecrets).size !== authorizationSecrets.length) {
@@ -94,6 +121,7 @@ if (!/CORS_ALLOWED_ORIGINS\s*=\s*"https:\/\/ops\.cubelic-fan\.com"/.test(wrangle
 }
 if (!/^CUBELIC_SAFE_MODE\s*=\s*"true"$/m.test(wrangler)) errors.push('wrangler.toml does not default CUBELIC_SAFE_MODE to true');
 const expectedProductionVars = {
+  CREDENTIAL_ENCRYPTION_KEY_VERSION: process.env.CREDENTIAL_ENCRYPTION_KEY_VERSION,
   CUBELIC_PHASE3_ENABLED: phase3Enabled ? 'true' : 'false',
   CUBELIC_PHASE3_DELIVERY_MODE: 'x',
   CUBELIC_PHASE3_SCHEDULE_POLICIES: phase3Enabled

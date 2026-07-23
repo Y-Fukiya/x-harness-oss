@@ -22,7 +22,7 @@ function buildXClient(account: { consumer_key: string | null; consumer_secret: s
 posts.post('/api/posts', async (c) => {
   const { xAccountId, text, mediaIds, quoteTweetId, paidPartnership } = await c.req.json<{ xAccountId: string; text: string; mediaIds?: string[]; quoteTweetId?: string; paidPartnership?: boolean }>();
   if (!text || !xAccountId) return c.json({ success: false, error: 'Missing required fields: xAccountId, text' }, 400);
-  const account = await getXAccountById(c.env.DB, xAccountId);
+  const account = await getXAccountById(c.env.DB, xAccountId, c.env.CREDENTIAL_ENCRYPTION_KEY);
   if (!account) return c.json({ success: false, error: 'X account not found' }, 404);
   const xClient = buildXClient(account);
   try {
@@ -46,7 +46,7 @@ posts.post('/api/posts/schedule', async (c) => {
   if (!xAccountId || !text || !scheduledAt) {
     return c.json({ success: false, error: 'Missing required fields: xAccountId, text, scheduledAt' }, 400);
   }
-  const account = await getXAccountById(c.env.DB, xAccountId);
+  const account = await getXAccountById(c.env.DB, xAccountId, c.env.CREDENTIAL_ENCRYPTION_KEY);
   if (!account) return c.json({ success: false, error: 'X account not found' }, 404);
   const post = await createScheduledPost(c.env.DB, xAccountId, text, scheduledAt, mediaIds, quoteTweetId);
   return c.json({
@@ -99,7 +99,7 @@ posts.delete('/api/posts/:tweetId', async (c) => {
   const xAccountId = c.req.query('xAccountId');
   const force = c.req.query('force') === '1';
   if (!xAccountId) return c.json({ success: false, error: 'Missing required query param: xAccountId' }, 400);
-  const account = await getXAccountById(c.env.DB, xAccountId);
+  const account = await getXAccountById(c.env.DB, xAccountId, c.env.CREDENTIAL_ENCRYPTION_KEY);
   if (!account) return c.json({ success: false, error: 'X account not found' }, 404);
 
   if (!force) {
@@ -136,7 +136,7 @@ posts.post('/api/posts/thread', async (c) => {
   if (!xAccountId || !texts || texts.length === 0) {
     return c.json({ success: false, error: 'Missing required fields: xAccountId, texts' }, 400);
   }
-  const account = await getXAccountById(c.env.DB, xAccountId);
+  const account = await getXAccountById(c.env.DB, xAccountId, c.env.CREDENTIAL_ENCRYPTION_KEY);
   if (!account) return c.json({ success: false, error: 'X account not found' }, 404);
   const xClient = buildXClient(account);
   try {
@@ -163,9 +163,9 @@ posts.get('/api/posts/search', async (c) => {
   const xAccountId = c.req.query('xAccountId');
   let account;
   if (xAccountId) {
-    account = await getXAccountById(c.env.DB, xAccountId);
+    account = await getXAccountById(c.env.DB, xAccountId, c.env.CREDENTIAL_ENCRYPTION_KEY);
   } else {
-    const accounts = await getXAccounts(c.env.DB);
+    const accounts = await getXAccounts(c.env.DB, c.env.CREDENTIAL_ENCRYPTION_KEY);
     account = accounts[0] || null;
   }
   if (!account) return c.json({ success: false, error: 'X account not found' }, 404);
@@ -188,7 +188,7 @@ posts.get('/api/x-users/:username/tweets', async (c) => {
   const limitParam = c.req.query('limit');
   const cursor = c.req.query('cursor');
   const knownUserId = c.req.query('userId');
-  const accounts = await getXAccounts(c.env.DB);
+  const accounts = await getXAccounts(c.env.DB, c.env.CREDENTIAL_ENCRYPTION_KEY);
   const account = accounts[0] || null;
   if (!account) return c.json({ success: false, error: 'X account not found' }, 404);
   const xClient = buildXClient(account);
@@ -210,9 +210,9 @@ posts.get('/api/posts/history', async (c) => {
   const cursor = c.req.query('cursor');
   let account;
   if (xAccountId) {
-    account = await getXAccountById(c.env.DB, xAccountId);
+    account = await getXAccountById(c.env.DB, xAccountId, c.env.CREDENTIAL_ENCRYPTION_KEY);
   } else {
-    const accounts = await getXAccounts(c.env.DB);
+    const accounts = await getXAccounts(c.env.DB, c.env.CREDENTIAL_ENCRYPTION_KEY);
     account = accounts[0] || null;
   }
   if (!account) return c.json({ success: false, error: 'X account not found' }, 404);
@@ -234,9 +234,9 @@ posts.get('/api/posts/mentions', async (c) => {
   const sinceId = c.req.query('sinceId');
   let account;
   if (xAccountId) {
-    account = await getXAccountById(c.env.DB, xAccountId);
+    account = await getXAccountById(c.env.DB, xAccountId, c.env.CREDENTIAL_ENCRYPTION_KEY);
   } else {
-    const accounts = await getXAccounts(c.env.DB);
+    const accounts = await getXAccounts(c.env.DB, c.env.CREDENTIAL_ENCRYPTION_KEY);
     account = accounts[0] || null;
   }
   if (!account) return c.json({ success: false, error: 'X account not found' }, 404);
@@ -381,7 +381,7 @@ posts.post('/api/posts/:id/reply', async (c) => {
   const tweetId = c.req.param('id');
   const { xAccountId, text } = await c.req.json<{ xAccountId: string; text: string }>();
   if (!xAccountId || !text) return c.json({ success: false, error: 'Missing required fields: xAccountId, text' }, 400);
-  const account = await getXAccountById(c.env.DB, xAccountId);
+  const account = await getXAccountById(c.env.DB, xAccountId, c.env.CREDENTIAL_ENCRYPTION_KEY);
   if (!account) return c.json({ success: false, error: 'X account not found' }, 404);
   const xClient = buildXClient(account);
   try {
@@ -396,7 +396,7 @@ posts.post('/api/posts/:id/reply', async (c) => {
 // GET /api/x-accounts/:id/subscription — get account's X Premium subscription status
 posts.get('/api/x-accounts/:id/subscription', async (c) => {
   const xAccountId = c.req.param('id');
-  const account = await getXAccountById(c.env.DB, xAccountId);
+  const account = await getXAccountById(c.env.DB, xAccountId, c.env.CREDENTIAL_ENCRYPTION_KEY);
   if (!account) return c.json({ success: false, error: 'X account not found' }, 404);
   const xClient = buildXClient(account);
   try {
@@ -437,7 +437,7 @@ posts.post('/api/media/upload', async (c) => {
   }
   const file = fileEntry as File;
 
-  const account = await getXAccountById(c.env.DB, xAccountId);
+  const account = await getXAccountById(c.env.DB, xAccountId, c.env.CREDENTIAL_ENCRYPTION_KEY);
   if (!account) return c.json({ success: false, error: 'X account not found' }, 404);
 
   const xClient = buildXClient(account);
@@ -457,7 +457,7 @@ posts.post('/api/posts/:id/like', async (c) => {
   const tweetId = c.req.param('id');
   const { xAccountId } = await c.req.json<{ xAccountId: string }>();
   if (!xAccountId) return c.json({ success: false, error: 'Missing required field: xAccountId' }, 400);
-  const account = await getXAccountById(c.env.DB, xAccountId);
+  const account = await getXAccountById(c.env.DB, xAccountId, c.env.CREDENTIAL_ENCRYPTION_KEY);
   if (!account) return c.json({ success: false, error: 'X account not found' }, 404);
   const xClient = buildXClient(account);
   try {
@@ -475,7 +475,7 @@ posts.post('/api/posts/:id/retweet', async (c) => {
   const tweetId = c.req.param('id');
   const { xAccountId } = await c.req.json<{ xAccountId: string }>();
   if (!xAccountId) return c.json({ success: false, error: 'Missing required field: xAccountId' }, 400);
-  const account = await getXAccountById(c.env.DB, xAccountId);
+  const account = await getXAccountById(c.env.DB, xAccountId, c.env.CREDENTIAL_ENCRYPTION_KEY);
   if (!account) return c.json({ success: false, error: 'X account not found' }, 404);
   const xClient = buildXClient(account);
   try {
@@ -494,9 +494,9 @@ posts.get('/api/posts/:id/quotes', async (c) => {
   const xAccountId = c.req.query('xAccountId');
   let account;
   if (xAccountId) {
-    account = await getXAccountById(c.env.DB, xAccountId);
+    account = await getXAccountById(c.env.DB, xAccountId, c.env.CREDENTIAL_ENCRYPTION_KEY);
   } else {
-    const accounts = await getXAccounts(c.env.DB);
+    const accounts = await getXAccounts(c.env.DB, c.env.CREDENTIAL_ENCRYPTION_KEY);
     account = accounts[0] || null;
   }
   if (!account) return c.json({ success: false, error: 'X account not found' }, 404);
@@ -624,7 +624,7 @@ posts.get('/api/quotes', async (c) => {
 posts.post('/api/quotes/sync', async (c) => {
   const { xAccountId } = await c.req.json<{ xAccountId: string }>();
   if (!xAccountId) return c.json({ success: false, error: 'Missing xAccountId' }, 400);
-  const account = await getXAccountById(c.env.DB, xAccountId);
+  const account = await getXAccountById(c.env.DB, xAccountId, c.env.CREDENTIAL_ENCRYPTION_KEY);
   if (!account) return c.json({ success: false, error: 'X account not found' }, 404);
   const xClient = buildXClient(account);
 

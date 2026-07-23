@@ -1,6 +1,7 @@
 'use client'
 import { useEffect, useState } from 'react'
 import { useRouter, usePathname } from 'next/navigation'
+import { api } from '@/lib/api'
 
 export default function AuthGuard({ children }: { children: React.ReactNode }) {
   const router = useRouter()
@@ -13,16 +14,22 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
       return
     }
 
-    const key = localStorage.getItem('xh_api_key')
-    if (!key) {
-      router.replace('/login')
-      return
+    let active = true
+    void api.session()
+      .then(() => {
+        if (!active) return
+        if (pathname !== '/cubelic') {
+          router.replace('/cubelic')
+          return
+        }
+        setChecked(true)
+      })
+      .catch(() => {
+        if (active) router.replace('/login')
+      })
+    return () => {
+      active = false
     }
-    if (pathname !== '/cubelic') {
-      router.replace('/cubelic')
-      return
-    }
-    setChecked(true)
   }, [pathname, router])
 
   if (!checked) {

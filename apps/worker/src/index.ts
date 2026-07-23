@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { authMiddleware } from './middleware/auth.js';
+import { authRateLimitMiddleware } from './middleware/auth-rate-limit.js';
 import { health } from './routes/health.js';
 import { session } from './routes/session.js';
 import { engagementGates } from './routes/engagement-gates.js';
@@ -27,16 +28,26 @@ import { cubelicPhase1RouteGuard } from './cubelic/safety.js';
 import { resolveCorsOrigin } from './cubelic/cors.js';
 import type { CubelicPhase3AdapterFactory, CubelicXAdapterFactory } from './cubelic/adapter.js';
 import { processDueCubelicPublications } from './cubelic/adapter.js';
+import { lineConnections } from './routes/line-connections.js';
+import { verifyOrInitializeCredentialKeyState } from '@x-harness/db';
 
 export type Env = {
   Bindings: {
     DB: D1Database;
     API_KEY: string;
+    SESSION_SIGNING_KEY?: string;
+    CREDENTIAL_ENCRYPTION_KEY: string;
+    CREDENTIAL_ENCRYPTION_KEY_VERSION: string;
+    STAFF_KEY_PEPPER?: string;
+    AUTH_RATE_LIMITER?: RateLimit;
+    PUBLIC_ACTION_RATE_LIMITER?: RateLimit;
+    ENVIRONMENT?: string;
     X_ACCESS_TOKEN: string;
     X_REFRESH_TOKEN: string;
     WORKER_URL: string;
     LINE_HARNESS_URL?: string;
     LINE_HARNESS_API_KEY?: string;
+    LINE_CONNECTION_ALLOWED_HOSTS?: string;
     USER_SEARCH_DAILY_LIMIT?: string;
     VERIFY_LOOKUP_DAILY_LIMIT?: string;
     GROWTH_IMAGES?: R2Bucket;
@@ -69,9 +80,11 @@ app.use('*', cors({
   origin: (origin, c) => resolveCorsOrigin(origin, (c.env as Env['Bindings']).CORS_ALLOWED_ORIGINS),
   allowHeaders: ['Authorization', 'Content-Type', 'X-Correlation-Id', 'X-Human-Approval-Key'],
   allowMethods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  credentials: true,
   maxAge: 600,
 }));
 app.use('*', cubelicPhase1RouteGuard);
+app.use('*', authRateLimitMiddleware);
 app.use('*', authMiddleware);
 
 app.route('/', health);
@@ -96,6 +109,7 @@ app.route('/', growth);
 app.route('/', growthSources);
 app.route('/', growthArticles);
 app.route('/', cubelic);
+app.route('/', lineConnections);
 
 // Settings API (key-value store)
 app.get('/api/settings', async (c) => {
@@ -115,31 +129,6 @@ app.put('/api/settings', async (c) => {
   return c.json({ success: true });
 });
 
-// LINE Connections API
-app.get('/api/line-connections', async (c) => {
-  const rows = await c.env.DB.prepare('SELECT id, name, worker_url, created_at FROM line_connections ORDER BY created_at DESC').all<{ id: string; name: string; worker_url: string; created_at: string }>();
-  return c.json({ success: true, data: rows.results });
-});
-
-app.get('/api/line-connections/:id', async (c) => {
-  const row = await c.env.DB.prepare('SELECT * FROM line_connections WHERE id = ?').bind(c.req.param('id')).first<{ id: string; name: string; worker_url: string; api_key: string; created_at: string }>();
-  if (!row) return c.json({ success: false, error: 'Not found' }, 404);
-  return c.json({ success: true, data: row });
-});
-
-app.post('/api/line-connections', async (c) => {
-  const body = await c.req.json<{ name: string; workerUrl: string; apiKey: string }>();
-  if (!body.name || !body.workerUrl || !body.apiKey) return c.json({ success: false, error: 'name, workerUrl, apiKey required' }, 400);
-  const id = crypto.randomUUID();
-  await c.env.DB.prepare('INSERT INTO line_connections (id, name, worker_url, api_key, created_at) VALUES (?, ?, ?, ?, datetime(\'now\'))').bind(id, body.name, body.workerUrl.replace(/\/$/, ''), body.apiKey).run();
-  return c.json({ success: true, data: { id, name: body.name, workerUrl: body.workerUrl } }, 201);
-});
-
-app.delete('/api/line-connections/:id', async (c) => {
-  await c.env.DB.prepare('DELETE FROM line_connections WHERE id = ?').bind(c.req.param('id')).run();
-  return c.json({ success: true });
-});
-
 app.notFound((c) => c.json({ success: false, error: 'Not found' }, 404));
 
 async function scheduled(
@@ -147,6 +136,11 @@ async function scheduled(
   env: Env['Bindings'],
   _ctx: ExecutionContext,
 ): Promise<void> {
+  await verifyOrInitializeCredentialKeyState(
+    env.DB,
+    env.CREDENTIAL_ENCRYPTION_KEY,
+    env.CREDENTIAL_ENCRYPTION_KEY_VERSION,
+  );
   await processDueCubelicPublications(env);
 }
 

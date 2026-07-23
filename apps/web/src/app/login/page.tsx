@@ -15,19 +15,14 @@ export default function LoginPage() {
     setError('')
 
     try {
-      // Temporarily store the dashboard key so api.session() can validate it.
-      localStorage.setItem('xh_api_key', apiKey)
-
-      const res = await api.session()
+      const res = await api.login(apiKey)
 
       if (res.success) {
         router.push('/cubelic')
       } else {
-        localStorage.removeItem('xh_api_key')
         setError('APIキーが正しくありません')
       }
     } catch (error) {
-      localStorage.removeItem('xh_api_key')
       setError(error instanceof ApiError && error.status === 401
         ? 'X Harness管理APIキーが正しくありません'
         : 'APIへの接続に失敗しました')

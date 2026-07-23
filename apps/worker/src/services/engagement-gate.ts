@@ -16,9 +16,14 @@ import { EngagementCache, fetchNewReplies, checkConditions } from './reply-trigg
 export async function processEngagementGates(
   db: D1Database, xClient: XClient, xAccountId?: string, forceRun = false,
   cache?: EngagementCache,
+  credentialEncryptionKey?: string,
 ): Promise<void> {
   const sharedCache = cache ?? new EngagementCache();
-  const allGates = await getEngagementGates(db, { activeOnly: true });
+  const allGates = await getEngagementGates(
+    db,
+    { activeOnly: true },
+    credentialEncryptionKey,
+  );
   const gates = xAccountId ? allGates.filter((g) => g.x_account_id === xAccountId) : allGates;
 
   for (const gate of gates) {

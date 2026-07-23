@@ -3,7 +3,7 @@ import { dirname, extname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
-const ignored = new Set(['.git', '.next', '.turbo', 'coverage', 'dist', 'node_modules']);
+const ignored = new Set(['.git', '.next', '.turbo', 'coverage', 'dist', 'node_modules', 'out']);
 const textExtensions = new Set(['.env', '.example', '.js', '.json', '.md', '.mjs', '.sql', '.toml', '.ts', '.tsx', '.yaml', '.yml']);
 const highConfidenceSecrets = [
   ['private key', /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/],
@@ -11,6 +11,8 @@ const highConfidenceSecrets = [
   ['OpenAI key', /\bsk-(?:proj-)?[A-Za-z0-9_-]{32,}\b/],
   ['AWS access key', /\bAKIA[0-9A-Z]{16}\b/],
   ['Slack token', /\bxox[baprs]-[A-Za-z0-9-]{20,}\b/],
+  ['Stripe live key', /\b(?:sk|rk)_live_[A-Za-z0-9]{20,}\b/],
+  ['X OAuth bearer token', /\bAAAAA[A-Za-z0-9%_-]{30,}\b/],
 ];
 
 async function collect(path) {

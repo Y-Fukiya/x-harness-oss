@@ -10,17 +10,12 @@ export class ApiError extends Error {
   }
 }
 
-export function getApiKey(): string {
-  if (typeof window === 'undefined') return '';
-  return localStorage.getItem('xh_api_key') || '';
-}
-
 export async function fetchApi<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${API_URL}${path}`, {
     ...options,
+    credentials: 'include',
     headers: {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${getApiKey()}`,
       ...options?.headers,
     },
   });
@@ -220,6 +215,18 @@ export interface ArticleDraft {
 
 export const api = {
   health: () => fetchApi<ApiResponse<{ status: string }>>('/api/health'),
+  login: (managementKey: string) => fetchApi<ApiResponse<{
+    authenticated: true;
+    role: 'admin' | 'editor' | 'viewer';
+    name: string | null;
+    expiresIn: number;
+  }>>('/api/session/login', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${managementKey}` },
+  }),
+  logout: () => fetchApi<ApiResponse<{ authenticated: false }>>('/api/session', {
+    method: 'DELETE',
+  }),
   session: () => fetchApi<ApiResponse<{
     authenticated: true;
     role: 'admin' | 'editor' | 'viewer';
@@ -349,7 +356,7 @@ export const api = {
       formData.append('mediaCategory', category);
       const res = await fetch(`${API_URL}/api/media/upload`, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${getApiKey()}` },
+        credentials: 'include',
         body: formData,
       });
       if (!res.ok) {

@@ -28,7 +28,7 @@ xaa.get('/webhook/xaa', async (c) => {
   }
 
   // Use the first active account's consumer_secret
-  const accounts = await getXAccounts(c.env.DB);
+  const accounts = await getXAccounts(c.env.DB, c.env.CREDENTIAL_ENCRYPTION_KEY);
   const account = accounts[0] ?? null;
   if (!account || !account.consumer_secret) {
     return c.json({ success: false, error: 'No active X account with consumer_secret configured' }, 500);
@@ -70,7 +70,7 @@ xaa.post('/webhook/xaa', async (c) => {
   const signature = c.req.header('x-twitter-webhooks-signature');
   let verified = false;
   if (signature) {
-    const accounts = await getXAccounts(c.env.DB);
+    const accounts = await getXAccounts(c.env.DB, c.env.CREDENTIAL_ENCRYPTION_KEY);
     for (const acct of accounts) {
       if (!acct.consumer_secret) continue;
       const expected = await hmacSha256(acct.consumer_secret, rawBody);
@@ -122,9 +122,9 @@ xaa.post('/api/xaa/webhook', async (c) => {
 
   let account;
   if (xAccountId) {
-    account = await getXAccountById(c.env.DB, xAccountId);
+    account = await getXAccountById(c.env.DB, xAccountId, c.env.CREDENTIAL_ENCRYPTION_KEY);
   } else {
-    const accounts = await getXAccounts(c.env.DB);
+    const accounts = await getXAccounts(c.env.DB, c.env.CREDENTIAL_ENCRYPTION_KEY);
     account = accounts[0] ?? null;
   }
   if (!account) {
@@ -174,9 +174,9 @@ xaa.post('/api/xaa/subscribe', async (c) => {
 
   let account;
   if (xAccountId) {
-    account = await getXAccountById(c.env.DB, xAccountId);
+    account = await getXAccountById(c.env.DB, xAccountId, c.env.CREDENTIAL_ENCRYPTION_KEY);
   } else {
-    const accounts = await getXAccounts(c.env.DB);
+    const accounts = await getXAccounts(c.env.DB, c.env.CREDENTIAL_ENCRYPTION_KEY);
     account = accounts[0] ?? null;
   }
   if (!account) {
@@ -210,9 +210,9 @@ xaa.get('/api/xaa/subscriptions', async (c) => {
 
   let account;
   if (xAccountId) {
-    account = await getXAccountById(c.env.DB, xAccountId);
+    account = await getXAccountById(c.env.DB, xAccountId, c.env.CREDENTIAL_ENCRYPTION_KEY);
   } else {
-    const accounts = await getXAccounts(c.env.DB);
+    const accounts = await getXAccounts(c.env.DB, c.env.CREDENTIAL_ENCRYPTION_KEY);
     account = accounts[0] ?? null;
   }
   if (!account) {
@@ -244,9 +244,9 @@ xaa.delete('/api/xaa/subscriptions/:id', async (c) => {
 
   let account;
   if (xAccountId) {
-    account = await getXAccountById(c.env.DB, xAccountId);
+    account = await getXAccountById(c.env.DB, xAccountId, c.env.CREDENTIAL_ENCRYPTION_KEY);
   } else {
-    const accounts = await getXAccounts(c.env.DB);
+    const accounts = await getXAccounts(c.env.DB, c.env.CREDENTIAL_ENCRYPTION_KEY);
     account = accounts[0] ?? null;
   }
   if (!account) {

@@ -1,5 +1,36 @@
 export function validateWranglerBoundaries(wrangler) {
   const violations = [];
+  const productionMatch = wrangler.match(
+    /^\[env\.production\]\s*$([\s\S]*?)(?=^\[|(?![\s\S]))/m,
+  );
+  if (productionMatch) {
+    const productionSection = productionMatch[1];
+    if (!/^workers_dev\s*=\s*false\s*$/m.test(productionSection)) {
+      violations.push('apps/worker/wrangler.toml: env.production must disable workers.dev');
+    }
+    if (!/^preview_urls\s*=\s*false\s*$/m.test(productionSection)) {
+      violations.push('apps/worker/wrangler.toml: env.production must disable preview URLs');
+    }
+    const productionCustomDomains = [
+      ...productionSection.matchAll(
+        /\{\s*pattern\s*=\s*"[^"]+"\s*,\s*custom_domain\s*=\s*true\s*\}/g,
+      ),
+    ];
+    if (productionCustomDomains.length !== 1) {
+      violations.push('apps/worker/wrangler.toml: env.production must configure one custom API domain');
+    }
+  }
+  if (productionMatch) {
+    for (const binding of ['AUTH_RATE_LIMITER', 'PUBLIC_ACTION_RATE_LIMITER']) {
+      const configured = new RegExp(
+        `\\[\\[env\\.production\\.ratelimits\\]\\][\\s\\S]*?^name\\s*=\\s*"${binding}"$`,
+        'm',
+      ).test(wrangler);
+      if (!configured) {
+        violations.push(`apps/worker/wrangler.toml: env.production must bind ${binding}`);
+      }
+    }
+  }
   const environmentVariables = [...wrangler.matchAll(
     /^\[env\.([^.]+)\.vars\]\s*$([\s\S]*?)(?=^\[|(?![\s\S]))/gm,
   )].map((match) => {

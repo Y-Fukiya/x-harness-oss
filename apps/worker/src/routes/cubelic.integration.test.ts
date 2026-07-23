@@ -19,6 +19,7 @@ import { isCubelicPublicationStopped, processDueCubelicPublications } from '../c
 
 const migrationPaths = [
   fileURLToPath(new URL('../../../../packages/db/migrations/008-staff-members.sql', import.meta.url)),
+  fileURLToPath(new URL('../../../../packages/db/migrations/023-staff-key-hashes.sql', import.meta.url)),
   fileURLToPath(new URL('../../../../packages/db/migrations/018-cubelic-content-os.sql', import.meta.url)),
   fileURLToPath(new URL('../../../../packages/db/migrations/019-cubelic-fail-closed-boundaries.sql', import.meta.url)),
   fileURLToPath(new URL('../../../../packages/db/migrations/020-cubelic-phase3-publication.sql', import.meta.url)),
@@ -57,13 +58,16 @@ describe('CUBΣLIC Worker API integration', () => {
     });
     bindings = {
       DB: db,
-      API_KEY: 'integration-api-key',
+      API_KEY: 'integration-api-key-with-at-least-32-bytes',
+      STAFF_KEY_PEPPER: 'integration-staff-key-pepper-with-at-least-32-bytes',
+      CREDENTIAL_ENCRYPTION_KEY: 'MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY',
+      CREDENTIAL_ENCRYPTION_KEY_VERSION: 'integration-v1',
       X_ACCESS_TOKEN: '',
       X_REFRESH_TOKEN: '',
       WORKER_URL: 'https://worker.example.test',
       CUBELIC_SAFE_MODE: 'true',
       GLOBAL_PUBLISHING_DISABLED: 'false',
-      HUMAN_APPROVAL_KEY: 'integration-human-key',
+      HUMAN_APPROVAL_KEY: 'integration-human-key-with-at-least-32-bytes',
       HERMES_ACCESS_TOKEN: 'integration-hermes-key',
       X_HARNESS_ACCOUNT_ID: 'x_account_row_integration',
     };
@@ -135,7 +139,7 @@ describe('CUBΣLIC Worker API integration', () => {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
-        'X-Human-Approval-Key': 'integration-human-key',
+        'X-Human-Approval-Key': 'integration-human-key-with-at-least-32-bytes',
         'X-Test-Global': 'true',
       },
       body: JSON.stringify({ name: 'Y-Fukiya' }),
@@ -176,7 +180,7 @@ describe('CUBΣLIC Worker API integration', () => {
 
     const resume = await request('/api/cubelic/admin/emergency-resume', {
       method: 'POST',
-      headers: { 'X-Human-Approval-Key': 'integration-human-key' },
+      headers: { 'X-Human-Approval-Key': 'integration-human-key-with-at-least-32-bytes' },
       body: '{}',
     });
     expect(resume.status).toBe(423);
@@ -209,7 +213,7 @@ describe('CUBΣLIC Worker API integration', () => {
     bindings.GLOBAL_PUBLISHING_DISABLED = undefined;
     const requestWindow = () => request('/api/cubelic/admin/operation-window', {
       method: 'POST',
-      headers: { 'content-type': 'application/json', 'X-Human-Approval-Key': 'integration-human-key' },
+      headers: { 'content-type': 'application/json', 'X-Human-Approval-Key': 'integration-human-key-with-at-least-32-bytes' },
       body: JSON.stringify({ eventId: 'evt_window_api', durationMinutes: 15 }),
     });
     expect((await requestWindow()).status).toBe(423);
@@ -275,7 +279,7 @@ describe('CUBΣLIC Worker API integration', () => {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
-        'X-Human-Approval-Key': 'integration-human-key',
+        'X-Human-Approval-Key': 'integration-human-key-with-at-least-32-bytes',
         'X-Correlation-Id': 'corr_reconciliation_not_published_api',
       },
       body: JSON.stringify({
@@ -294,7 +298,7 @@ describe('CUBΣLIC Worker API integration', () => {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
-        'X-Human-Approval-Key': 'integration-human-key',
+        'X-Human-Approval-Key': 'integration-human-key-with-at-least-32-bytes',
       },
       body: '{}',
     });
@@ -306,7 +310,7 @@ describe('CUBΣLIC Worker API integration', () => {
     await openWindow('evt_content_ingestion');
     const blockedPublication = await request(`/api/cubelic/drafts/${manualBody.data.draft_id}/publish`, {
       method: 'POST',
-      headers: { 'X-Human-Approval-Key': 'integration-human-key' },
+      headers: { 'X-Human-Approval-Key': 'integration-human-key-with-at-least-32-bytes' },
       body: '{}',
     });
     expect(blockedPublication.status).toBe(423);
@@ -337,7 +341,7 @@ describe('CUBΣLIC Worker API integration', () => {
 
     const publication = await request(`/api/cubelic/drafts/${manualBody.data.draft_id}/publish`, {
       method: 'POST',
-      headers: { 'X-Human-Approval-Key': 'integration-human-key' },
+      headers: { 'X-Human-Approval-Key': 'integration-human-key-with-at-least-32-bytes' },
       body: '{}',
     });
     expect(publication.status).toBe(201);
@@ -465,7 +469,7 @@ describe('CUBΣLIC Worker API integration', () => {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
-        'X-Human-Approval-Key': 'integration-human-key',
+        'X-Human-Approval-Key': 'integration-human-key-with-at-least-32-bytes',
       },
       body: JSON.stringify({
         text: '結果不明の照合テストです https://example.test/reconciliation',
@@ -479,7 +483,7 @@ describe('CUBΣLIC Worker API integration', () => {
     const draftId = ((await manual.json()) as { data: { draft_id: string } }).data.draft_id;
     expect((await request(`/api/cubelic/drafts/${draftId}/approve`, {
       method: 'POST',
-      headers: { 'X-Human-Approval-Key': 'integration-human-key' },
+      headers: { 'X-Human-Approval-Key': 'integration-human-key-with-at-least-32-bytes' },
       body: '{}',
     })).status).toBe(200);
     const draft = await db.prepare(
@@ -515,7 +519,7 @@ describe('CUBΣLIC Worker API integration', () => {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
-        'X-Human-Approval-Key': 'integration-human-key',
+        'X-Human-Approval-Key': 'integration-human-key-with-at-least-32-bytes',
         'X-Correlation-Id': 'corr_reconciliation_not_published_api',
       },
       body: JSON.stringify({
@@ -572,7 +576,7 @@ describe('CUBΣLIC Worker API integration', () => {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
-        'X-Human-Approval-Key': 'integration-human-key',
+        'X-Human-Approval-Key': 'integration-human-key-with-at-least-32-bytes',
       },
       body: JSON.stringify({
         text: '投稿済み照合テストです https://example.test/reconciliation/published',
@@ -586,7 +590,7 @@ describe('CUBΣLIC Worker API integration', () => {
     const draftId = ((await manual.json()) as { data: { draft_id: string } }).data.draft_id;
     expect((await request(`/api/cubelic/drafts/${draftId}/approve`, {
       method: 'POST',
-      headers: { 'X-Human-Approval-Key': 'integration-human-key' },
+      headers: { 'X-Human-Approval-Key': 'integration-human-key-with-at-least-32-bytes' },
       body: '{}',
     })).status).toBe(200);
     const draft = await db.prepare(
@@ -621,7 +625,7 @@ describe('CUBΣLIC Worker API integration', () => {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
-        'X-Human-Approval-Key': 'integration-human-key',
+        'X-Human-Approval-Key': 'integration-human-key-with-at-least-32-bytes',
       },
       body: JSON.stringify({
         outcome: 'published',
@@ -638,7 +642,7 @@ describe('CUBΣLIC Worker API integration', () => {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
-          'X-Human-Approval-Key': 'integration-human-key',
+          'X-Human-Approval-Key': 'integration-human-key-with-at-least-32-bytes',
         },
         body: JSON.stringify({
           outcome: 'published',
@@ -657,7 +661,7 @@ describe('CUBΣLIC Worker API integration', () => {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
-        'X-Human-Approval-Key': 'integration-human-key',
+        'X-Human-Approval-Key': 'integration-human-key-with-at-least-32-bytes',
         'X-Correlation-Id': 'corr_reconciliation_published_api',
       },
       body: JSON.stringify({
@@ -711,7 +715,7 @@ describe('CUBΣLIC Worker API integration', () => {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
-        'X-Human-Approval-Key': 'integration-human-key',
+        'X-Human-Approval-Key': 'integration-human-key-with-at-least-32-bytes',
       },
       body: validBody,
     })).status).toBe(423);
@@ -730,11 +734,21 @@ describe('CUBΣLIC Worker API integration', () => {
       headers: { 'content-type': 'application/json' },
       body: validBody,
     })).status).toBe(403);
+    bindings.HUMAN_APPROVAL_KEY = 'short-key';
     expect((await request(path, {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
-        'X-Human-Approval-Key': 'integration-human-key',
+        'X-Human-Approval-Key': 'short-key',
+      },
+      body: validBody,
+    })).status).toBe(503);
+    bindings.HUMAN_APPROVAL_KEY = 'integration-human-key-with-at-least-32-bytes';
+    expect((await request(path, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'X-Human-Approval-Key': 'integration-human-key-with-at-least-32-bytes',
         'X-Test-Actor': 'hermes',
       },
       body: validBody,
@@ -743,7 +757,7 @@ describe('CUBΣLIC Worker API integration', () => {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
-        'X-Human-Approval-Key': 'integration-human-key',
+        'X-Human-Approval-Key': 'integration-human-key-with-at-least-32-bytes',
         'X-Test-Global': 'true',
       },
       body: validBody,
@@ -753,7 +767,7 @@ describe('CUBΣLIC Worker API integration', () => {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
-        'X-Human-Approval-Key': 'integration-human-key',
+        'X-Human-Approval-Key': 'integration-human-key-with-at-least-32-bytes',
       },
       body: JSON.stringify({
         outcome: 'not_published',
@@ -774,7 +788,7 @@ describe('CUBΣLIC Worker API integration', () => {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
-        'X-Human-Approval-Key': 'integration-human-key',
+        'X-Human-Approval-Key': 'integration-human-key-with-at-least-32-bytes',
       },
       body: validBody,
     });
@@ -854,7 +868,7 @@ describe('CUBΣLIC Worker API integration', () => {
     await openWindow(event.event_id);
     expect((await request('/api/cubelic/events', {
       method: 'POST',
-      headers: { 'content-type': 'application/json', 'X-Human-Approval-Key': 'integration-human-key' },
+      headers: { 'content-type': 'application/json', 'X-Human-Approval-Key': 'integration-human-key-with-at-least-32-bytes' },
       body: JSON.stringify(event),
     })).status).toBe(201);
 
@@ -876,7 +890,7 @@ describe('CUBΣLIC Worker API integration', () => {
     })).status).toBe(403);
     const blocked = await request('/api/cubelic/media/validate', {
       method: 'POST',
-      headers: { 'content-type': 'application/json', 'X-Human-Approval-Key': 'integration-human-key' },
+      headers: { 'content-type': 'application/json', 'X-Human-Approval-Key': 'integration-human-key-with-at-least-32-bytes' },
       body: JSON.stringify(media),
     });
     expect(blocked.status).toBe(422);
@@ -937,7 +951,7 @@ describe('CUBΣLIC Worker API integration', () => {
     })).status).toBe(403);
     expect((await request('/api/cubelic/events', {
       method: 'POST',
-      headers: { 'content-type': 'application/json', 'X-Human-Approval-Key': 'integration-human-key' },
+      headers: { 'content-type': 'application/json', 'X-Human-Approval-Key': 'integration-human-key-with-at-least-32-bytes' },
       body: JSON.stringify(humanRightsEvent),
     })).status).toBe(201);
     await openWindow(event.event_id);
@@ -981,7 +995,7 @@ describe('CUBΣLIC Worker API integration', () => {
 
     const masterResponse = await request('/api/cubelic/masters/songs/ingest', {
       method: 'POST',
-      headers: { 'content-type': 'application/json', 'X-Human-Approval-Key': 'integration-human-key' },
+      headers: { 'content-type': 'application/json', 'X-Human-Approval-Key': 'integration-human-key-with-at-least-32-bytes' },
       body: JSON.stringify({
         schema_version: 'cubelic.song-master.v1',
         generated_at: '2026-07-21T18:00:00+09:00',
@@ -1007,14 +1021,14 @@ describe('CUBΣLIC Worker API integration', () => {
     await db.prepare("UPDATE cubelic_songs SET active = 0 WHERE song_id = 'song_api_1'").run();
     expect((await request(`/api/cubelic/drafts/${draftId}/approve`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', 'X-Human-Approval-Key': 'integration-human-key' },
+      headers: { 'content-type': 'application/json', 'X-Human-Approval-Key': 'integration-human-key-with-at-least-32-bytes' },
       body: '{}',
     })).status).toBe(422);
     expect(createDraft).not.toHaveBeenCalled();
     await db.prepare("UPDATE cubelic_songs SET active = 1 WHERE song_id = 'song_api_1'").run();
     const approval = await request(`/api/cubelic/drafts/${draftId}/approve`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', 'X-Human-Approval-Key': 'integration-human-key' },
+      headers: { 'content-type': 'application/json', 'X-Human-Approval-Key': 'integration-human-key-with-at-least-32-bytes' },
       body: '{}',
     });
     expect(approval.status).toBe(200);
@@ -1027,14 +1041,14 @@ describe('CUBΣLIC Worker API integration', () => {
     await openWindow(event.event_id);
     expect((await request('/api/cubelic/admin/emergency-resume', {
       method: 'POST',
-      headers: { 'X-Human-Approval-Key': 'integration-human-key' },
+      headers: { 'X-Human-Approval-Key': 'integration-human-key-with-at-least-32-bytes' },
       body: '{}',
     })).status).toBe(200);
 
     const rejectedDraftId = setlistBody.data.drafts[1].draft_id;
     expect((await request(`/api/cubelic/drafts/${rejectedDraftId}/reject`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', 'X-Human-Approval-Key': 'integration-human-key' },
+      headers: { 'content-type': 'application/json', 'X-Human-Approval-Key': 'integration-human-key-with-at-least-32-bytes' },
       body: JSON.stringify({ reason: 'manual_rejection' }),
     })).status).toBe(200);
     const rejectionSummary = await (await request('/api/cubelic/rejections/summary')).json() as { data: Array<{ reason: string; count: number }> };
@@ -1043,7 +1057,7 @@ describe('CUBΣLIC Worker API integration', () => {
     const postId = '1234567890123456789';
     expect((await request('/api/cubelic/metrics/post-mappings', {
       method: 'POST',
-      headers: { 'content-type': 'application/json', 'X-Human-Approval-Key': 'integration-human-key' },
+      headers: { 'content-type': 'application/json', 'X-Human-Approval-Key': 'integration-human-key-with-at-least-32-bytes' },
       body: JSON.stringify({ draftId, postId, publishedAt: '2026-07-21T22:00:00+09:00' }),
     })).status).toBe(201);
     expect((await request('/api/cubelic/metrics/collect', {
@@ -1055,7 +1069,7 @@ describe('CUBΣLIC Worker API integration', () => {
     expect(summary.data).toEqual([expect.objectContaining({ draftId, dimensions: expect.objectContaining({ eventId: event.event_id }) })]);
 
     const stop = await request('/api/cubelic/admin/emergency-stop', {
-      method: 'POST', headers: { 'X-Human-Approval-Key': 'integration-human-key' }, body: '{}',
+      method: 'POST', headers: { 'X-Human-Approval-Key': 'integration-human-key-with-at-least-32-bytes' }, body: '{}',
     });
     expect(stop.status).toBe(200);
     expect((await request('/api/cubelic/content', {

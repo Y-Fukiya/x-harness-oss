@@ -22,6 +22,7 @@ import {
 import {
   appendCubelicAudit,
   bootstrapCubelicOperator,
+  hashStaffApiKey,
   closeCubelicOperationWindowAndStop,
   createCubelicContent,
   createCubelicDrafts,
@@ -75,6 +76,7 @@ import { buildCubelicPhase3XAdapter, buildCubelicXAdapter } from '../cubelic/ada
 import { isPhase3PublicationEnabled } from '../cubelic/safety.js';
 import { parseContent, parseEvent, parseMedia, parseMemberMaster, parseSetlist, parseSongMaster } from '../cubelic/validation.js';
 import type { Env } from '../index.js';
+import { isStrongRuntimeSecret, secretsEqual } from '../security/session.js';
 
 export const cubelic = new Hono<Env>();
 const DUPLICATE_WINDOW_MS = 72 * 60 * 60_000;
@@ -367,10 +369,10 @@ async function requireHumanApproval(c: Context<Env>): Promise<Response | null> {
   if (actor(c) !== 'human' || !['admin', 'editor'].includes(c.get('staffRole') ?? '')) {
     return c.json({ success: false, error: 'Human admin/editor approval is required', code: 'human_approval_required' }, 403);
   }
-  if (!c.env.HUMAN_APPROVAL_KEY) {
+  if (!isStrongRuntimeSecret(c.env.HUMAN_APPROVAL_KEY)) {
     return c.json({ success: false, error: 'Human approval secret is not configured', code: 'human_approval_not_configured' }, 503);
   }
-  if (c.req.header('X-Human-Approval-Key') !== c.env.HUMAN_APPROVAL_KEY) {
+  if (!await secretsEqual(c.env.HUMAN_APPROVAL_KEY, c.req.header('X-Human-Approval-Key') ?? '')) {
     return c.json({ success: false, error: 'Human approval proof is invalid', code: 'human_approval_invalid' }, 403);
   }
   return null;
@@ -1430,7 +1432,14 @@ cubelic.post('/api/cubelic/admin/operator-bootstrap', async (c) => {
       throw new PublicationPolicyError('operator_name_invalid', 'A named operator from 2 to 80 characters is required');
     }
     const apiKey = `xh_staff_${crypto.randomUUID().replaceAll('-', '')}${crypto.randomUUID().replaceAll('-', '')}`;
-    const created = await bootstrapCubelicOperator(c.env.DB, { name, apiKey }, {
+    if (!isStrongRuntimeSecret(c.env.STAFF_KEY_PEPPER)) {
+      return c.json({ success: false, error: 'Staff authentication is not configured' }, 503);
+    }
+    const created = await bootstrapCubelicOperator(c.env.DB, {
+      name,
+      apiKey,
+      apiKeyHash: await hashStaffApiKey(apiKey, c.env.STAFF_KEY_PEPPER),
+    }, {
       actor: 'human',
       action: 'staff.operator_bootstrapped',
       entityType: 'staff',

@@ -148,7 +148,7 @@ export const buildCubelicPhase3XAdapter: CubelicPhase3AdapterFactory = (env, ope
           'A previous publication attempt exists and requires human reconciliation',
         );
       }
-      if (!isStagingFakeDelivery(env) && !(await getXAccountById(env.DB, accountId))) {
+      if (!isStagingFakeDelivery(env) && !(await getXAccountById(env.DB, accountId, env.CREDENTIAL_ENCRYPTION_KEY))) {
         throw new PublicationPolicyError('x_account_not_found', 'Configured X account was not found');
       }
       let job: Awaited<ReturnType<typeof createCubelicPublicationJob>>;
@@ -350,7 +350,7 @@ async function deliverTextToX(
   accountId: string,
   text: string,
 ): Promise<{ postId: string }> {
-  const account = await getXAccountById(env.DB, accountId);
+  const account = await getXAccountById(env.DB, accountId, env.CREDENTIAL_ENCRYPTION_KEY);
   if (!account) throw new PublicationPolicyError('x_account_not_found', 'Configured X account was not found');
   const tweet = await buildXClient(account).createTweet({ text });
   await incrementApiUsage(env.DB, account.id, 'create_tweet');

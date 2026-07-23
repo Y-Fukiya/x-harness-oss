@@ -9,6 +9,7 @@ import {
 import type { DbStaffMember } from '@x-harness/db';
 import { requireRole } from '../middleware/auth.js';
 import type { Env } from '../index.js';
+import { isStrongRuntimeSecret } from '../security/session.js';
 
 const staff = new Hono<Env>();
 
@@ -99,7 +100,23 @@ staff.post('/api/staff', async (c) => {
     }
 
     const apiKey = generateApiKey();
-    const member = await createStaffMember(c.env.DB, { name, role, apiKey });
+    if (!isStrongRuntimeSecret(c.env.STAFF_KEY_PEPPER)) {
+      return c.json({ success: false, error: 'Staff authentication is not configured' }, 503);
+    }
+    const member = await createStaffMember(
+      c.env.DB,
+      { name, role, apiKey },
+      c.env.STAFF_KEY_PEPPER,
+      {
+      actor: 'human',
+      action: 'staff.created',
+      entityType: 'staff',
+      entityId: '',
+      before: {},
+      after: { role, active: true },
+      correlationId: c.req.header('X-Correlation-Id') ?? crypto.randomUUID(),
+      },
+    );
     return c.json({ success: true, data: { ...serialize(member), plainApiKey: apiKey } }, 201);
   } catch (err) {
     console.error('POST /api/staff error:', err);
@@ -114,6 +131,9 @@ staff.put('/api/staff/:id', async (c) => {
 
   try {
     const id = c.req.param('id');
+    if (c.get('staffId') === id) {
+      return c.json({ success: false, error: 'Cannot change the current operator account' }, 409);
+    }
     const body = await c.req.json<{
       name?: string;
       role?: 'admin' | 'editor' | 'viewer';
@@ -123,8 +143,32 @@ staff.put('/api/staff/:id', async (c) => {
     if (body.role !== undefined && !['admin', 'editor', 'viewer'].includes(body.role)) {
       return c.json({ success: false, error: 'Invalid role. Must be admin, editor, or viewer' }, 400);
     }
+    const existing = await getStaffMemberById(c.env.DB, id);
+    if (!existing) return c.json({ success: false, error: 'Not found' }, 404);
+    if (
+      existing.role === 'admin'
+      && (body.role !== undefined && body.role !== 'admin' || body.isActive === false)
+    ) {
+      const activeAdmins = await c.env.DB.prepare(
+        "SELECT COUNT(*) AS count FROM staff_members WHERE role = 'admin' AND is_active = 1",
+      ).first<{ count: number }>();
+      if ((activeAdmins?.count ?? 0) <= 1) {
+        return c.json({ success: false, error: 'Cannot disable the last active admin' }, 409);
+      }
+    }
 
-    const member = await updateStaffMember(c.env.DB, id, body);
+    const member = await updateStaffMember(c.env.DB, id, body, {
+      actor: 'human',
+      action: 'staff.updated',
+      entityType: 'staff',
+      entityId: id,
+      before: { role: existing.role, active: existing.is_active === 1 },
+      after: {
+        role: body.role ?? existing.role,
+        active: body.isActive ?? existing.is_active === 1,
+      },
+      correlationId: c.req.header('X-Correlation-Id') ?? crypto.randomUUID(),
+    });
     if (!member) return c.json({ success: false, error: 'Not found' }, 404);
     return c.json({ success: true, data: serialize(member) });
   } catch (err) {
@@ -140,7 +184,28 @@ staff.delete('/api/staff/:id', async (c) => {
 
   try {
     const id = c.req.param('id');
-    await deleteStaffMember(c.env.DB, id);
+    if (c.get('staffId') === id) {
+      return c.json({ success: false, error: 'Cannot delete the current operator account' }, 409);
+    }
+    const existing = await getStaffMemberById(c.env.DB, id);
+    if (!existing) return c.json({ success: false, error: 'Not found' }, 404);
+    if (existing.role === 'admin' && existing.is_active === 1) {
+      const activeAdmins = await c.env.DB.prepare(
+        "SELECT COUNT(*) AS count FROM staff_members WHERE role = 'admin' AND is_active = 1",
+      ).first<{ count: number }>();
+      if ((activeAdmins?.count ?? 0) <= 1) {
+        return c.json({ success: false, error: 'Cannot delete the last active admin' }, 409);
+      }
+    }
+    await deleteStaffMember(c.env.DB, id, {
+      actor: 'human',
+      action: 'staff.deleted',
+      entityType: 'staff',
+      entityId: id,
+      before: {},
+      after: {},
+      correlationId: c.req.header('X-Correlation-Id') ?? crypto.randomUUID(),
+    });
     return c.json({ success: true });
   } catch (err) {
     console.error('DELETE /api/staff/:id error:', err);

@@ -62,7 +62,6 @@ interface CampaignInput {
   replyKeyword?: string | null;
   campaignLink?: string;
   lineHarnessUrl?: string;
-  lineHarnessApiKey?: string;
   lineHarnessTag?: string;
 }
 
@@ -74,7 +73,7 @@ campaigns.post('/api/campaigns', async (c) => {
   }
 
   // Resolve X account
-  const account = await getXAccountById(c.env.DB, body.xAccountId);
+  const account = await getXAccountById(c.env.DB, body.xAccountId, c.env.CREDENTIAL_ENCRYPTION_KEY);
   if (!account) {
     return c.json({ success: false, error: 'X account not found' }, 404);
   }
@@ -106,7 +105,7 @@ campaigns.post('/api/campaigns', async (c) => {
       requireRepost: body.requireRepost ?? false,
       requireFollow: body.requireFollow ?? false,
       replyKeyword: body.replyKeyword ?? undefined,
-    });
+    }, c.env.CREDENTIAL_ENCRYPTION_KEY);
     // Deactivate until tweet is posted
     await updateEngagementGate(c.env.DB, gate.id, { isActive: false });
   } catch (err: any) {
@@ -140,9 +139,8 @@ campaigns.post('/api/campaigns', async (c) => {
   // Step 4: Activate gate with real postId + LINE metadata if provided
   const gateUpdates: Record<string, unknown> = { postId: tweetId, isActive: true };
   if (body.lineHarnessUrl) gateUpdates.lineHarnessUrl = body.lineHarnessUrl;
-  if (body.lineHarnessApiKey) gateUpdates.lineHarnessApiKey = body.lineHarnessApiKey;
   if (body.lineHarnessTag) gateUpdates.lineHarnessTag = body.lineHarnessTag;
-  await updateEngagementGate(c.env.DB, gateId, gateUpdates);
+  await updateEngagementGate(c.env.DB, gateId, gateUpdates, c.env.CREDENTIAL_ENCRYPTION_KEY);
 
   return c.json({
     success: true,

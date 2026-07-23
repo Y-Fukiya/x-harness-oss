@@ -396,8 +396,12 @@ async function fetchAndCacheMetered(
 
 // ─── Helper: build XClient from gate's account ───
 
-async function buildXClientForGate(db: D1Database, gate: { x_account_id: string }) {
-  const accounts = await getXAccounts(db);
+async function buildXClientForGate(
+  db: D1Database,
+  gate: { x_account_id: string },
+  credentialEncryptionKey: string,
+) {
+  const accounts = await getXAccounts(db, credentialEncryptionKey);
   const account = accounts.find((a) => a.id === gate.x_account_id);
   if (!account) return null;
 
@@ -435,7 +439,7 @@ verify.get('/api/engagement-gates/:id/verify', async (c) => {
     return c.json({ success: false, error: 'username query parameter required' }, 400);
   }
 
-  const gate = await getEngagementGateById(c.env.DB, gateId);
+  const gate = await getEngagementGateById(c.env.DB, gateId, c.env.CREDENTIAL_ENCRYPTION_KEY);
   if (!gate) return c.json({ success: false, error: 'Gate not found' }, 404);
   if (!gate.is_active) return c.json({ success: false, error: 'This gate is no longer active' }, 400);
   if (gate.expires_at && new Date(gate.expires_at).getTime() <= Date.now()) {
@@ -477,7 +481,7 @@ verify.get('/api/engagement-gates/:id/verify', async (c) => {
     }
 
     // 2. Not in cache — resolve username and check follower_id_cache / X API
-    const clientResult = await buildXClientForGate(c.env.DB, gate);
+    const clientResult = await buildXClientForGate(c.env.DB, gate, c.env.CREDENTIAL_ENCRYPTION_KEY);
     if (!clientResult) return c.json({ success: false, error: 'X account not found' }, 500);
 
     // This endpoint is public and each unknown username costs a billable
@@ -699,7 +703,7 @@ verify.get('/api/engagement-gates/:id/verify', async (c) => {
       }
       const updatedConditions = { ...match.conditions };
       let needsApiCheck = false;
-      const clientResult = await buildXClientForGate(c.env.DB, gate);
+      const clientResult = await buildXClientForGate(c.env.DB, gate, c.env.CREDENTIAL_ENCRYPTION_KEY);
 
       // Try D1 follower_id_cache first (zero X API cost). Unlike the generic
       // followers table (which also holds delivered users from non-follow
@@ -796,7 +800,7 @@ verify.get('/api/engagement-gates/:id/verify', async (c) => {
         },
       });
     }
-    const clientForRefresh = await buildXClientForGate(c.env.DB, gate);
+    const clientForRefresh = await buildXClientForGate(c.env.DB, gate, c.env.CREDENTIAL_ENCRYPTION_KEY);
     if (clientForRefresh) {
       try {
         const fresh = await fetchAndCacheDeduped(c.env.DB, clientForRefresh.xClient, gate, clientForRefresh.account.x_user_id);
@@ -830,7 +834,7 @@ verify.get('/api/engagement-gates/:id/verify', async (c) => {
   }
 
   // ─── Cache miss: fetch from X API ───
-  const clientResult = await buildXClientForGate(c.env.DB, gate);
+  const clientResult = await buildXClientForGate(c.env.DB, gate, c.env.CREDENTIAL_ENCRYPTION_KEY);
   if (!clientResult) return c.json({ success: false, error: 'X account not found' }, 500);
 
   try {
@@ -871,7 +875,7 @@ verify.get('/api/engagement-gates/:id/verify', async (c) => {
 verify.get('/api/engagement-gates/:id/repliers', async (c) => {
   const gateId = c.req.param('id');
 
-  const gate = await getEngagementGateById(c.env.DB, gateId);
+  const gate = await getEngagementGateById(c.env.DB, gateId, c.env.CREDENTIAL_ENCRYPTION_KEY);
   if (!gate) return c.json({ success: false, error: 'Gate not found' }, 404);
   if (!gate.is_active) return c.json({ success: false, error: 'This gate is no longer active' }, 400);
 
@@ -893,7 +897,7 @@ verify.get('/api/engagement-gates/:id/repliers', async (c) => {
   }
 
   // ─── Cache miss: fetch and cache ───
-  const clientResult = await buildXClientForGate(c.env.DB, gate);
+  const clientResult = await buildXClientForGate(c.env.DB, gate, c.env.CREDENTIAL_ENCRYPTION_KEY);
   if (!clientResult) return c.json({ success: false, error: 'X account not found' }, 500);
 
   try {

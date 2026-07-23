@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { api, API_URL, fetchApi, getApiKey } from '@/lib/api'
+import { api, API_URL, fetchApi } from '@/lib/api'
 import type { XAccount } from '@/lib/api'
 import Header from '@/components/layout/header'
 import { useCurrentAccountId } from '@/hooks/use-selected-account'
@@ -11,6 +11,50 @@ import { useCurrentAccountId } from '@/hooks/use-selected-account'
 const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp']
 const ALLOWED_VIDEO_TYPES = ['video/mp4']
 const MAX_IMAGES = 4
+
+function canonicalJson(value: unknown): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? 'null'
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`
+  return `{${Object.entries(value as Record<string, unknown>)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, child]) => `${JSON.stringify(key)}:${canonicalJson(child)}`)
+    .join(',')}}`
+}
+
+async function fetchExternalConnection<T>(
+  connectionId: string,
+  path: string,
+  method: 'GET' | 'POST' = 'GET',
+  body?: unknown,
+): Promise<T> {
+  if (method === 'GET') {
+    return fetchApi<T>(`/api/line-connections/${connectionId}/proxy`, {
+      method: 'POST',
+      body: JSON.stringify({ method, path, body }),
+    })
+  }
+  const digest = await crypto.subtle.digest(
+    'SHA-256',
+    new TextEncoder().encode(`${connectionId}\n${method}\n${path}\n${canonicalJson(body ?? {})}`),
+  )
+  const fingerprint = [...new Uint8Array(digest)]
+    .map((byte) => byte.toString(16).padStart(2, '0'))
+    .join('')
+  const storageKey = `xh:external-operation:${fingerprint}`
+  const operationId = localStorage.getItem(storageKey) ?? crypto.randomUUID()
+  localStorage.setItem(storageKey, operationId)
+  try {
+    const result = await fetchApi<T>(`/api/line-connections/${connectionId}/proxy`, {
+      method: 'POST',
+      headers: { 'X-Correlation-Id': operationId },
+      body: JSON.stringify({ method, path, body }),
+    })
+    localStorage.removeItem(storageKey)
+    return result
+  } catch (error) {
+    throw error
+  }
+}
 
 type Step = 1 | 2 | 3 | 4
 
@@ -233,10 +277,9 @@ export default function CampaignPage() {
   const [lineConnections, setLineConnections] = useState<Array<{ id: string; name: string; worker_url: string }>>([])
   const [selectedConnectionId, setSelectedConnectionId] = useState('')
   const [lineUrl, setLineUrl] = useState('')
-  const [lineApiKey, setLineApiKey] = useState('')
   const [lineLoading, setLineLoading] = useState(false)
   const lineEnabled = !!selectedConnectionId
-  const lineConfigured = lineUrl.trim().length > 0 && lineApiKey.trim().length > 0
+  const lineConfigured = lineUrl.trim().length > 0
   const [rewardTemplates, setRewardTemplates] = useState<Array<{ id: string; name: string; messageType: string; messageContent: string }>>([])
   const [selectedTemplateId, setSelectedTemplateId] = useState('')
   const [selectedIntroTemplateId, setSelectedIntroTemplateId] = useState('')
@@ -248,7 +291,7 @@ export default function CampaignPage() {
   const [selectedFormId, setSelectedFormId] = useState('')
   const [formsLoading, setFormsLoading] = useState(false)
 
-  // Load LINE connections from DB + resolve selected connection's credentials
+  // Load external connection metadata. Credentials never enter browser JavaScript.
   const loadLineConfig = useCallback(async () => {
     setLineLoading(true)
     try {
@@ -262,24 +305,14 @@ export default function CampaignPage() {
     finally { setLineLoading(false) }
   }, [])
 
-  // Resolve credentials when connection is selected
+  // Resolve only the public origin when a connection is selected.
   useEffect(() => {
     if (!selectedConnectionId) {
       setLineUrl('')
-      setLineApiKey('')
       return
     }
-    const resolve = async () => {
-      try {
-        const res = await fetchApi<{ success: boolean; data: { worker_url: string; api_key: string } }>(`/api/line-connections/${selectedConnectionId}`)
-        if (res.success) {
-          setLineUrl(res.data.worker_url)
-          setLineApiKey(res.data.api_key)
-        }
-      } catch { /* silent */ }
-    }
-    resolve()
-  }, [selectedConnectionId])
+    setLineUrl(lineConnections.find((item) => item.id === selectedConnectionId)?.worker_url ?? '')
+  }, [lineConnections, selectedConnectionId])
 
   const loadSubscription = useCallback(async (id: string) => {
     if (!id) return
@@ -332,14 +365,11 @@ export default function CampaignPage() {
     setSelectedIntroTemplateId('')
     let cancelled = false
     const controller = new AbortController()
-    const lhUrl = lineUrl.replace(/\/$/, '')
-    const lhKey = lineApiKey
     setTemplateLoading(true)
-    fetch(`${lhUrl}/api/message-templates`, {
-      headers: { Authorization: `Bearer ${lhKey}` },
-      signal: controller.signal,
-    })
-      .then(r => r.json())
+    fetchExternalConnection<{ success: boolean; data?: Array<{ id: string; name: string; messageType: string; messageContent: string }> }>(
+      selectedConnectionId,
+      '/api/message-templates',
+    )
       .then((json: { success: boolean; data?: Array<{ id: string; name: string; messageType: string; messageContent: string }> }) => {
         if (cancelled) return
         const list = json.data ?? []
@@ -354,7 +384,7 @@ export default function CampaignPage() {
       })
       .finally(() => { if (!cancelled) setTemplateLoading(false) })
     return () => { cancelled = true; controller.abort() }
-  }, [lineEnabled, lineUrl, lineApiKey, lineConfigured])
+  }, [lineEnabled, selectedConnectionId, lineConfigured])
 
   useEffect(() => {
     if (!lineEnabled || !lineConfigured) {
@@ -364,14 +394,11 @@ export default function CampaignPage() {
     }
     let cancelled = false
     const controller = new AbortController()
-    const lhUrl = lineUrl.replace(/\/$/, '')
-    const lhKey = lineApiKey
     setPoolsLoading(true)
-    fetch(`${lhUrl}/api/traffic-pools`, {
-      headers: { Authorization: `Bearer ${lhKey}` },
-      signal: controller.signal,
-    })
-      .then(r => r.json())
+    fetchExternalConnection<{ success: boolean; data?: Array<{ id: string; slug: string; name: string }> }>(
+      selectedConnectionId,
+      '/api/traffic-pools',
+    )
       .then((json: { success: boolean; data?: Array<{ id: string; slug: string; name: string }> }) => {
         if (!cancelled) {
           const poolList = json.data ?? []
@@ -387,7 +414,7 @@ export default function CampaignPage() {
       .catch((err) => { if (!cancelled && err.name !== 'AbortError') setPools([]) })
       .finally(() => { if (!cancelled) setPoolsLoading(false) })
     return () => { cancelled = true; controller.abort() }
-  }, [lineEnabled, lineUrl, lineApiKey, lineConfigured])
+  }, [lineEnabled, selectedConnectionId, lineConfigured])
 
   // Fetch LINE Harness forms
   useEffect(() => {
@@ -398,21 +425,18 @@ export default function CampaignPage() {
     }
     let cancelled = false
     const controller = new AbortController()
-    const lhUrl = lineUrl.replace(/\/$/, '')
-    const lhKey = lineApiKey
     setFormsLoading(true)
-    fetch(`${lhUrl}/api/forms`, {
-      headers: { Authorization: `Bearer ${lhKey}` },
-      signal: controller.signal,
-    })
-      .then(r => r.json())
-      .then((json: { success: boolean; data?: { items?: Array<{ id: string; name: string }> } }) => {
+    fetchExternalConnection<{ success: boolean; data?: { items?: Array<{ id: string; name: string }> } | Array<{ id: string; name: string }> }>(
+      selectedConnectionId,
+      '/api/forms',
+    )
+      .then((json) => {
         if (!cancelled) setLineForms(Array.isArray(json.data) ? json.data : json.data?.items ?? [])
       })
       .catch((err) => { if (!cancelled && err.name !== 'AbortError') setLineForms([]) })
       .finally(() => { if (!cancelled) setFormsLoading(false) })
     return () => { cancelled = true; controller.abort() }
-  }, [lineEnabled, lineUrl, lineApiKey, lineConfigured])
+  }, [lineEnabled, selectedConnectionId, lineConfigured])
 
   // メディア処理
   useEffect(() => {
@@ -491,7 +515,8 @@ export default function CampaignPage() {
         // a. ゲートだけ先に作成（inactive、仮postId）
         const prepRes = await fetch(`${xWorkerUrl}/api/engagement-gates`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('xh_api_key')}` },
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             xAccountId: accountId,
             postId: `pending-${Date.now()}`,
@@ -514,23 +539,24 @@ export default function CampaignPage() {
 
         try {
           const lhUrl = lineUrl.replace(/\/$/, '')
-          const lhHeaders = { 'Content-Type': 'application/json', Authorization: `Bearer ${lineApiKey}` }
-
-          // b. LINE Harness でタグ作成（直接呼び出し）
-          const tagRes = await fetch(`${lhUrl}/api/tags`, {
-            method: 'POST', headers: lhHeaders,
-            body: JSON.stringify({ name: `x-gate-${gateId.slice(0, 8)}` }),
-          })
-          const tagJson = await tagRes.json() as { success: boolean; data: { id: string } }
+          // b. Worker proxy creates the tag without exposing the external API key.
+          const tagJson = await fetchExternalConnection<{ success: boolean; data: { id: string } }>(
+            selectedConnectionId,
+            '/api/tags',
+            'POST',
+            { name: `x-gate-${gateId.slice(0, 8)}` },
+          )
           const lineTagId = tagJson.data?.id || ''
 
           // c. フォーム: 既存選択 or 自動生成
           let formId = selectedFormId
           if (!formId) {
             // 自動生成
-            const formRes = await fetch(`${lhUrl}/api/forms`, {
-              method: 'POST', headers: lhHeaders,
-              body: JSON.stringify({
+            const formJson = await fetchExternalConnection<{ success: boolean; data: { id: string } }>(
+              selectedConnectionId,
+              '/api/forms',
+              'POST',
+              {
                 name: `${new Date().toISOString().slice(0, 10)} ${text.slice(0, 20).replace(/\n/g, ' ')}...`,
                 fields: [{ name: 'x_username', label: 'X ID（@なし）', type: 'text', required: true }],
                 onSubmitTagId: lineTagId,
@@ -540,9 +566,8 @@ export default function CampaignPage() {
                   const t = rewardTemplates.find(r => r.id === selectedTemplateId)
                   return t ? { onSubmitMessageType: t.messageType, onSubmitMessageContent: t.messageContent } : {}
                 })()),
-              }),
-            })
-            const formJson = await formRes.json() as { success: boolean; data: { id: string } }
+              },
+            )
             formId = formJson.data?.id || ''
           }
 
@@ -551,17 +576,17 @@ export default function CampaignPage() {
           // （古い LINE Harness で /api/tracked-links が無い、ネットワークエラー、非 JSON レスポンス等のケースに備える）
           let ref = `campaign-${Date.now().toString(36)}`
           try {
-            const trackedLinkRes = await fetch(`${lhUrl}/api/tracked-links`, {
-              method: 'POST',
-              headers: lhHeaders,
-              body: JSON.stringify({
+            const trackedLinkJson = await fetchExternalConnection<{ success: boolean; data: { id: string } }>(
+              selectedConnectionId,
+              '/api/tracked-links',
+              'POST',
+              {
                 name: `${new Date().toISOString().slice(0, 10)} X Campaign`,
                 originalUrl: `${lhUrl}/auth/line`,
                 introTemplateId: selectedIntroTemplateId || null,
                 rewardTemplateId: selectedTemplateId || null,
-              }),
-            })
-            const trackedLinkJson = await trackedLinkRes.json() as { success: boolean; data: { id: string } }
+              },
+            )
             if (trackedLinkJson.success && trackedLinkJson.data?.id) {
               ref = trackedLinkJson.data.id
             } else {

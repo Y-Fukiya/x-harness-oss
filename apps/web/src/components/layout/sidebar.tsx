@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useSelectedAccount } from '@/hooks/use-selected-account'
+import { api } from '@/lib/api'
 
 // ─── メニュー定義 ───
 
@@ -207,8 +208,9 @@ export default function Sidebar() {
         <p className="text-xs text-gray-400">X Harness v{process.env.APP_VERSION || '0.0.0'}</p>
         <button
           onClick={() => {
-            localStorage.removeItem('xh_api_key')
-            window.location.href = '/login'
+            void api.logout().finally(() => {
+              window.location.href = '/login'
+            })
           }}
           className="flex items-center gap-2 text-xs text-gray-400 hover:text-red-500 transition-colors"
         >

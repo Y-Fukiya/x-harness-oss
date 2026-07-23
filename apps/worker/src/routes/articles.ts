@@ -313,7 +313,7 @@ articles.post('/api/articles/draft', async (c) => {
     return c.json({ success: false, error: 'Provide either body (markdown) or contentState (DraftJS)' }, 400);
   }
 
-  const account = await getXAccountById(c.env.DB, xAccountId);
+  const account = await getXAccountById(c.env.DB, xAccountId, c.env.CREDENTIAL_ENCRYPTION_KEY);
   if (!account) return c.json({ success: false, error: 'X account not found' }, 404);
   const xClient = buildXClient(account);
 
@@ -353,7 +353,7 @@ articles.post('/api/articles/:id/publish', async (c) => {
   const { xAccountId } = await c.req.json<{ xAccountId: string }>();
   if (!xAccountId) return c.json({ success: false, error: 'Missing required field: xAccountId' }, 400);
 
-  const account = await getXAccountById(c.env.DB, xAccountId);
+  const account = await getXAccountById(c.env.DB, xAccountId, c.env.CREDENTIAL_ENCRYPTION_KEY);
   if (!account) return c.json({ success: false, error: 'X account not found' }, 404);
   const xClient = buildXClient(account);
 
@@ -374,8 +374,8 @@ articles.get('/api/news/search', async (c) => {
   if (!query) return c.json({ success: false, error: 'Missing required parameter: query' }, 400);
 
   const account = xAccountId
-    ? await getXAccountById(c.env.DB, xAccountId)
-    : (await import('@x-harness/db').then((m) => m.getXAccounts(c.env.DB)))[0] ?? null;
+    ? await getXAccountById(c.env.DB, xAccountId, c.env.CREDENTIAL_ENCRYPTION_KEY)
+    : (await import('@x-harness/db').then((m) => m.getXAccounts(c.env.DB, c.env.CREDENTIAL_ENCRYPTION_KEY)))[0] ?? null;
   if (!account) return c.json({ success: false, error: 'X account not found' }, 404);
   const xClient = buildXClient(account);
 
@@ -394,8 +394,8 @@ articles.get('/api/news/:id', async (c) => {
   const xAccountId = c.req.query('xAccountId');
 
   const account = xAccountId
-    ? await getXAccountById(c.env.DB, xAccountId)
-    : (await import('@x-harness/db').then((m) => m.getXAccounts(c.env.DB)))[0] ?? null;
+    ? await getXAccountById(c.env.DB, xAccountId, c.env.CREDENTIAL_ENCRYPTION_KEY)
+    : (await import('@x-harness/db').then((m) => m.getXAccounts(c.env.DB, c.env.CREDENTIAL_ENCRYPTION_KEY)))[0] ?? null;
   if (!account) return c.json({ success: false, error: 'X account not found' }, 404);
   const xClient = buildXClient(account);
 
