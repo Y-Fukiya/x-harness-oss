@@ -37,9 +37,10 @@ The staging media bucket has two active lifecycle rules:
 - incomplete multipart uploads abort after seven days
 - objects under `media/` expire after one day
 
-The one-day staging rule bounds forgotten smoke artifacts. No production
-retention period was inferred or configured; that remains a release-policy
-decision.
+The one-day staging rule bounds forgotten smoke artifacts. On 2026-07-24 the
+user delegated the remaining operational choices to the recommended safe
+defaults. The production bucket now expires objects under `media/` after 30
+days and retains its seven-day incomplete-multipart abort rule.
 
 ## Staging smoke evidence
 
@@ -78,7 +79,9 @@ impossible.
 - Production media smoke mode: disabled
 - Staging D1 emergency stop: active
 - Production D1 emergency stop: active
-- Production R2 retention approval: pending
+- Production R2 retention: 30 days for `media/`
+- Incident objective: quarantine starts within 15 minutes and R2 deletion is
+  verified within one hour
 - Post-deployment production safety verification: passed with the exact D1
   stop active and publishing, scheduling, media delivery, and the operation
   window closed

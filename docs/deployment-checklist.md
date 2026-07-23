@@ -107,7 +107,10 @@ Phase 3 is default-disabled. Do not combine its first enablement with unrelated 
    lifecycle rule, then set `STAGING_PHASE3_MEDIA_SMOKE_VERIFIED=true` and
    `MEDIA_RETENTION_POLICY_VERIFIED=true`. During this staging-only exercise,
    set `CUBELIC_PHASE3_MEDIA_SMOKE_MODE=true`; turn it off before recording the
-   evidence. Production rejects this smoke mode.
+   evidence. Production rejects this smoke mode. The recommended production
+   policy expires `media/` objects after 30 days, aborts incomplete multipart
+   uploads after seven days, begins incident quarantine within 15 minutes, and
+   verifies deletion within one hour.
 9. Run production preflight with `CUBELIC_PHASE3_ENABLED=true`, `CUBELIC_PHASE3_DELIVERY_MODE=x`, `GLOBAL_PUBLISHING_DISABLED=false`, `PHASE3_RELEASE_APPROVED=true`, the reviewed policies, and `STAGING_PHASE3_SMOKE_VERIFIED=true`. Production must reject `staging_fake`.
 10. Back up D1, apply migrations 020, 021, 022, 027, and 028, deploy Worker, verify Cron and
     `/api/cubelic/admin/status`, then deploy the operator UI.
@@ -119,4 +122,7 @@ Phase 3 is default-disabled. Do not combine its first enablement with unrelated 
     For the first smoke only, use the dedicated staging fake Worker with
     `CUBELIC_HUMAN_INTERACTIONS_SMOKE_MODE=true`; turn it off before recording
     `STAGING_HUMAN_INTERACTIONS_SMOKE_VERIFIED=true`. Production must keep the
-    smoke-mode flag false.
+    smoke-mode flag false. A successful generic staging smoke is not reusable
+    approval for production: enable one-by-one interactions only for a concrete
+    target with a named operator, a fresh operation-bound proof, and same-window
+    verification of the required X User Context scope.

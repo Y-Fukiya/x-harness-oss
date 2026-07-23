@@ -70,3 +70,27 @@ If an X delivery attempt remains `publishing` with
    approval.
 8. Do not repair these states with direct D1 writes while the reviewed DG-026
    endpoint is available.
+
+### Media rights, privacy, or wrong-object incident
+
+The production media retention period is 30 days. Retention is a deletion
+backstop, not the incident response mechanism.
+
+1. Within 15 minutes of detection, activate the D1 emergency stop and set the
+   environment publishing stop. Do not resume either stop during triage.
+2. Preserve only asset id, R2 key, checksum, job id, correlation id, timestamps,
+   and evidence references. Do not copy media bytes, post bodies, credentials,
+   or personal information into tickets or chat.
+3. A named admin/editor calls
+   `POST /api/cubelic/media/:assetId/quarantine` with the normal staff
+   credential and human-approval proof. The route requires the D1 stop, deletes
+   the R2 object, verifies absence, and appends start/completion audits.
+4. Verify R2 deletion within one hour of detection. If deletion cannot be
+   confirmed, retain both stops, revoke affected credentials, and classify the
+   incident as SEV-1.
+5. If an X post may exist, have an authorized human assess X removal and
+   platform reporting separately. The application intentionally has no delete
+   authority.
+6. Never delete the immutable D1 media mapping or append-only audit history.
+   Reuse of the quarantined asset id or checksum requires a new reviewed
+   incident recovery decision.

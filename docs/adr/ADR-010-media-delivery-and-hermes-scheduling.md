@@ -58,3 +58,18 @@ immediate-publication, emergency-resume, X credential, or direct-X tool.
 - Text-only publication and scheduling behavior is unchanged.
 - The media flag must remain disabled until a bounded R2 retention rule and a
   named-human incident quarantine/delete procedure are configured and verified.
+
+## Production operating profile
+
+The recommended operating defaults were accepted on 2026-07-24:
+
+- staging `media/` objects expire after one day
+- production `media/` objects expire after 30 days
+- incomplete multipart uploads abort after seven days
+- a rights, privacy, credential, or wrong-object incident starts emergency
+  stop and quarantine within 15 minutes
+- R2 deletion must be verified within one hour
+- lifecycle expiry is only a backstop; it does not replace the named-human
+  quarantine route
+- production media delivery stays disabled until one exact asset and post have
+  current evidence and per-operation human approval
