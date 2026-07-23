@@ -53,7 +53,8 @@ async function request(path, init = {}) {
 async function expectStatus(path, init, expected) {
   const result = await request(path, init);
   if (result.response.status !== expected) {
-    throw new Error(`${path} returned HTTP ${result.response.status}, expected ${expected}`);
+    const code = typeof result.body?.code === 'string' ? ` (${result.body.code})` : '';
+    throw new Error(`${path} returned HTTP ${result.response.status}${code}, expected ${expected}`);
   }
   return result.body;
 }
@@ -62,10 +63,13 @@ const runId = Date.now().toString(36);
 const eventId = `evt_media_smoke_${runId}`;
 const assetId = `ast_media_smoke_${runId}`;
 const contentId = `cnt_media_smoke_${runId}`;
-const mediaBytes = Buffer.from(
-  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
-  'base64',
-);
+const mediaBytes = Buffer.concat([
+  Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+    'base64',
+  ),
+  Buffer.from(runId),
+]);
 const sha256 = createHash('sha256').update(mediaBytes).digest('hex');
 const now = Date.now();
 const iso = (milliseconds) => new Date(milliseconds).toISOString();

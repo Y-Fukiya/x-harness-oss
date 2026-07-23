@@ -61,7 +61,7 @@ async function draft(input: {
     variant: input.variant,
     target_stage: input.content.target_stage,
     emotion_tags: input.content.emotion_tags,
-    hashtags: ['CUBΣLIC'],
+    hashtags: [],
     destination_url: destinationUrl,
     utm: {
       source: 'x',
@@ -103,9 +103,9 @@ export async function generateSetlistDrafts(input: {
   const freshnessScore = calculateFreshnessScore(input.event.ends_at, input.now);
   const list = compactSetlist(input.setlist.songs);
   const texts = [
-    `【セトリ速報】\n${input.event.title} @ ${input.event.venue}\n${list}\n\n{{tracked_url}}\n#CUBΣLIC`,
-    `${input.event.venue}でのCUBΣLIC、今日の曲順をまとめました。\n${list}\n\nセトリ詳細：{{tracked_url}}\n#CUBΣLIC`,
-    `今日のライブを曲順で振り返り。\n${list}\n\n公演情報とセトリ：{{tracked_url}}\n#CUBΣLIC`,
+    `【セトリ速報】\n${input.event.title} @ ${input.event.venue}\n${list}\n\n{{tracked_url}}`,
+    `${input.event.venue}での${input.event.title}、今日の曲順をまとめました。\n${list}\n\nセトリ詳細：{{tracked_url}}`,
+    `${input.event.title}のライブを曲順で振り返り。\n${list}\n\n公演情報とセトリ：{{tracked_url}}`,
   ] as const;
 
   return Promise.all(texts.slice(0, PHASE1_POLICY.content.maxGeneratedVariants).map((text, index) => {
@@ -149,25 +149,25 @@ export async function generateVideoDrafts(input: {
     live_digest: {
       id: 'live_digest_v1',
       texts: [
-        `${input.event.title}のライブから、短い一場面を。\n映像と音でCUBΣLICの空気をどうぞ。\n#CUBΣLIC`,
-        `今日の${input.event.venue}から。\nライブで伝わる表情と動きを、少しだけ切り取りました。\n#CUBΣLIC`,
-        `CUBΣLICを初めて見る方へ。\nまずはこのライブ映像から雰囲気を受け取ってみてください。\n#CUBΣLIC`,
+        `${input.event.title}のライブから、短い一場面を。\n映像と音でステージの空気をどうぞ。`,
+        `今日の${input.event.venue}から。\nライブで伝わる表情と動きを、少しだけ切り取りました。`,
+        `${input.event.title}を初めて見る方へ。\nまずはこのライブ映像から雰囲気を受け取ってみてください。`,
       ],
     },
     member_focus: {
       id: 'member_focus_v1',
       texts: [
-        `${input.event.title}から、メンバーの印象的な一場面を。\n表情と動きに注目してみてください。\n#CUBΣLIC`,
-        `${input.event.venue}のステージで見えた、ひとつの見せ場。\n短い映像でどうぞ。\n#CUBΣLIC`,
-        `ライブで伝わるメンバーの魅力を、少しだけ切り取りました。\n#CUBΣLIC`,
+        `${input.event.title}から、メンバーの印象的な一場面を。\n表情と動きに注目してみてください。`,
+        `${input.event.venue}のステージで見えた、ひとつの見せ場。\n短い映像でどうぞ。`,
+        `${input.event.title}で伝わるメンバーの魅力を、少しだけ切り取りました。`,
       ],
     },
     song_focus: {
       id: 'song_focus_v1',
       texts: [
-        `${input.event.title}から、楽曲の見どころが伝わる一場面を。\n#CUBΣLIC`,
-        `${input.event.venue}で響いた一曲から、短いライブ映像をどうぞ。\n#CUBΣLIC`,
-        `CUBΣLICの曲をライブ映像で。\n音とステージの空気を受け取ってみてください。\n#CUBΣLIC`,
+        `${input.event.title}から、楽曲の見どころが伝わる一場面を。`,
+        `${input.event.venue}で響いた一曲から、短いライブ映像をどうぞ。`,
+        `${input.event.title}の曲をライブ映像で。\n音とステージの空気を受け取ってみてください。`,
       ],
     },
   } as const;
