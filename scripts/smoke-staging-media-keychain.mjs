@@ -94,7 +94,7 @@ try {
     body: JSON.stringify({
       event_id: eventId,
       title: `Staging media smoke ${runId}`,
-      venue: 'staging-only',
+      venue: `staging-only-${runId}`,
       starts_at: iso(now - 70 * 60_000),
       ends_at: iso(now - 10 * 60_000),
       state: 'digest_ready',
