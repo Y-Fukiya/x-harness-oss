@@ -25,5 +25,10 @@
     "typescript": "^5.9.3",
     "vitest": "^4.1.2"
   },
+  "pnpm": {
+    "overrides": {
+      "postcss": "^8.5.12"
+    }
+  },
   "license": "MIT"
 }
