@@ -2,7 +2,17 @@ import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { Hono } from 'hono';
 import { Miniflare } from 'miniflare';
-import { Phase1XPublishingAdapter, Phase3XPublishingAdapter, type ScheduleInput, type XDraftInput } from '@x-harness/content-os';
+import {
+  NamedHumanXInteractionAdapter,
+  Phase1XPublishingAdapter,
+  Phase3XPublishingAdapter,
+  PublicationPolicyError,
+  canonicalHumanXInteractionApproval,
+  type HumanXInteractionApprovalRequest,
+  type HumanXInteractionInput,
+  type ScheduleInput,
+  type XDraftInput,
+} from '@x-harness/content-os';
 import {
   createCubelicInertDraft,
   createCubelicEvent,
@@ -36,6 +46,7 @@ const migrationPaths = [
   fileURLToPath(new URL('../../../../packages/db/migrations/021-cubelic-publication-reconciliation.sql', import.meta.url)),
   fileURLToPath(new URL('../../../../packages/db/migrations/022-cubelic-operation-window-publication-lock.sql', import.meta.url)),
   fileURLToPath(new URL('../../../../packages/db/migrations/027-cubelic-media-delivery.sql', import.meta.url)),
+  fileURLToPath(new URL('../../../../packages/db/migrations/028-cubelic-human-x-interactions.sql', import.meta.url)),
 ];
 
 describe('CUBΣLIC Worker API integration', () => {
@@ -46,6 +57,7 @@ describe('CUBΣLIC Worker API integration', () => {
   let createDraft: ReturnType<typeof vi.fn>;
   let publishPost: ReturnType<typeof vi.fn>;
   let schedulePost: ReturnType<typeof vi.fn>;
+  let executeInteraction: ReturnType<typeof vi.fn>;
   let mediaBucket: R2Bucket;
 
   beforeEach(async () => {
@@ -76,6 +88,8 @@ describe('CUBΣLIC Worker API integration', () => {
       STAFF_KEY_PEPPER: 'integration-staff-key-pepper-with-at-least-32-bytes',
       CREDENTIAL_ENCRYPTION_KEY: 'MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY',
       CREDENTIAL_ENCRYPTION_KEY_VERSION: 'integration-v1',
+      INTERACTION_FINGERPRINT_KEY: 'integration-fingerprint-key-with-at-least-32-bytes',
+      INTERACTION_FINGERPRINT_KEY_VERSION: 'integration-v1',
       X_ACCESS_TOKEN: '',
       X_REFRESH_TOKEN: '',
       WORKER_URL: 'https://worker.example.test',
@@ -98,6 +112,10 @@ describe('CUBΣLIC Worker API integration', () => {
       status: 'scheduled' as const,
       scheduledAt: input.scheduledAt,
     }));
+    executeInteraction = vi.fn(async (input: HumanXInteractionInput) => ({
+      status: 'completed' as const,
+      ...(['reply', 'dm_reply'].includes(input.kind) ? { externalId: `external_${input.operationId}` } : {}),
+    }));
     app.use('*', async (c, next) => {
       const requestActor = c.req.header('X-Test-Actor') === 'hermes' ? 'hermes' : 'human';
       if (requestActor === 'human') {
@@ -119,6 +137,12 @@ describe('CUBΣLIC Worker API integration', () => {
         checkRateLimit: async () => ({ allowed: true }),
         scheduleWriter: schedulePost,
         publishWriter: publishPost,
+      }));
+      c.set('cubelicHumanInteractionAdapterFactory', () => new NamedHumanXInteractionAdapter({
+        enabled: bindings.CUBELIC_HUMAN_INTERACTIONS_ENABLED === 'true',
+        operatorId: 'staff_integration_operator',
+        isEmergencyStopped: () => isCubelicPublicationStopped(db),
+        write: executeInteraction,
       }));
       c.set('cubelicMediaBodyWriter', async (input) => {
         const body = await new Response(input.body).arrayBuffer();
@@ -156,6 +180,48 @@ describe('CUBΣLIC Worker API integration', () => {
       after: { eventId },
       correlationId: `corr_window_${eventId}`,
     });
+  }
+
+  async function interactionHeaders(
+    path: string,
+    body: Record<string, unknown>,
+    extra: Record<string, string> = {},
+  ): Promise<Record<string, string>> {
+    const kind = path.endsWith('/dm-reply')
+      ? 'dm_reply'
+      : path.slice(path.lastIndexOf('/') + 1);
+    const canonical = canonicalHumanXInteractionApproval({
+      kind,
+      ...body,
+    } as HumanXInteractionApprovalRequest, 'staff_integration_operator');
+    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(canonical));
+    const requestFingerprint = Array.from(
+      new Uint8Array(digest),
+      (byte) => byte.toString(16).padStart(2, '0'),
+    ).join('');
+    const key = await crypto.subtle.importKey(
+      'raw',
+      new TextEncoder().encode('integration-human-key-with-at-least-32-bytes'),
+      { name: 'HMAC', hash: 'SHA-256' },
+      false,
+      ['sign'],
+    );
+    const proof = await crypto.subtle.sign(
+      'HMAC',
+      key,
+      new TextEncoder().encode(
+        `interaction-approval:v1:${requestFingerprint}:staff_integration_operator`,
+      ),
+    );
+    return {
+      'content-type': 'application/json',
+      'X-Human-Approval-Key': 'integration-human-key-with-at-least-32-bytes',
+      'X-Interaction-Approval-Proof': Array.from(
+        new Uint8Array(proof),
+        (byte) => byte.toString(16).padStart(2, '0'),
+      ).join(''),
+      ...extra,
+    };
   }
 
   it('bootstraps one named operator with the global and human keys while stopped', async () => {
@@ -197,6 +263,253 @@ describe('CUBΣLIC Worker API integration', () => {
     expect((await db.prepare(
       "SELECT COUNT(*) AS count FROM cubelic_audit_logs WHERE action = 'staff.operator_bootstrapped'",
     ).first<{ count: number }>())?.count).toBe(1);
+  });
+
+  it('executes only individually approved, idempotent named-human interactions', async () => {
+    bindings.CUBELIC_HUMAN_INTERACTIONS_ENABLED = 'true';
+    bindings.HUMAN_INTERACTIONS_RELEASE_APPROVED = 'true';
+    bindings.STAGING_HUMAN_INTERACTIONS_SMOKE_VERIFIED = 'true';
+    bindings.CUBELIC_PHASE3_DELIVERY_MODE = 'staging_fake';
+    bindings.WORKER_URL = 'https://x-harness-worker-staging.yoshihiro-fukiya.workers.dev';
+    const approvedAt = new Date().toISOString();
+    const cases = [
+      ['/api/cubelic/interactions/reply', {
+        operationId: 'op_reply_route',
+        approvalId: 'approval_reply_route',
+        approvedAt,
+        targetPostId: '1900000000000000001',
+        text: '確認済みの個別返信です。',
+        inboundOrMentionAttested: true,
+      }],
+      ['/api/cubelic/interactions/dm-reply', {
+        operationId: 'op_dm_route',
+        approvalId: 'approval_dm_route',
+        approvedAt,
+        conversationId: 'dm_conversation_private_1',
+        inboundMessageId: '1900000000000000002',
+        text: 'お問い合わせへの個別返信です。',
+        recipientInitiated: true,
+      }],
+      ['/api/cubelic/interactions/like', {
+        operationId: 'op_like_route',
+        approvalId: 'approval_like_route',
+        approvedAt,
+        targetPostId: '1900000000000000003',
+      }],
+      ['/api/cubelic/interactions/follow', {
+        operationId: 'op_follow_route',
+        approvalId: 'approval_follow_route',
+        approvedAt,
+        targetUserId: '1900000000000000004',
+      }],
+      ['/api/cubelic/interactions/unfollow', {
+        operationId: 'op_unfollow_route',
+        approvalId: 'approval_unfollow_route',
+        approvedAt,
+        targetUserId: '1900000000000000005',
+      }],
+    ] as const;
+
+    for (const [path, body] of cases) {
+      const response = await request(path, {
+        method: 'POST',
+        headers: await interactionHeaders(path, body),
+        body: JSON.stringify(body),
+      });
+      expect(response.status).toBe(201);
+      await expect(response.json()).resolves.toMatchObject({
+        success: true,
+        data: { operationId: body.operationId, status: 'completed' },
+      });
+    }
+    expect(executeInteraction).toHaveBeenCalledTimes(5);
+
+    const replay = await request(cases[0][0], {
+      method: 'POST',
+      headers: await interactionHeaders(cases[0][0], cases[0][1]),
+      body: JSON.stringify(cases[0][1]),
+    });
+    expect(replay.status).toBe(200);
+    await expect(replay.json()).resolves.toMatchObject({
+      data: { operationId: 'op_reply_route', status: 'completed', idempotentReplay: true },
+    });
+    expect(executeInteraction).toHaveBeenCalledTimes(5);
+    const conflictingBody = { ...cases[0][1], text: '異なる本文への差し替え' };
+    const conflictingReplay = await request(cases[0][0], {
+      method: 'POST',
+      headers: await interactionHeaders(cases[0][0], conflictingBody),
+      body: JSON.stringify(conflictingBody),
+    });
+    expect(conflictingReplay.status).toBe(409);
+    await expect(conflictingReplay.json()).resolves.toMatchObject({
+      code: 'interaction_idempotency_conflict',
+    });
+    expect(executeInteraction).toHaveBeenCalledTimes(5);
+    const repeatedTargetBody = {
+      ...cases[0][1],
+      operationId: 'op_reply_route_second',
+      approvalId: 'approval_reply_route_second',
+    };
+    const repeatedTarget = await request(cases[0][0], {
+      method: 'POST',
+      headers: await interactionHeaders(cases[0][0], repeatedTargetBody),
+      body: JSON.stringify(repeatedTargetBody),
+    });
+    expect(repeatedTarget.status).toBe(409);
+    expect(executeInteraction).toHaveBeenCalledTimes(5);
+
+    const auditRows = await db.prepare(
+      "SELECT before_json, after_json FROM cubelic_audit_logs WHERE action LIKE 'interaction.%'",
+    ).all<{ before_json: string; after_json: string }>();
+    const serializedAudits = JSON.stringify(auditRows.results);
+    expect(serializedAudits).not.toContain('確認済みの個別返信です');
+    expect(serializedAudits).not.toContain('お問い合わせへの個別返信です');
+    expect(serializedAudits).not.toContain('dm_conversation_private_1');
+    expect(serializedAudits).not.toContain('1900000000000000001');
+    const plainTargetDigest = await crypto.subtle.digest(
+      'SHA-256',
+      new TextEncoder().encode(JSON.stringify({
+        kind: 'reply',
+        targetPostId: '1900000000000000001',
+      })),
+    );
+    const plainTargetFingerprint = Array.from(
+      new Uint8Array(plainTargetDigest),
+      (byte) => byte.toString(16).padStart(2, '0'),
+    ).join('');
+    const persisted = await db.prepare(
+      'SELECT request_fingerprint, interaction_fingerprint, approval_fingerprint FROM cubelic_human_x_interactions WHERE operation_id = ?',
+    ).bind('op_reply_route').first<{
+      request_fingerprint: string;
+      interaction_fingerprint: string;
+      approval_fingerprint: string;
+    }>();
+    expect(persisted?.interaction_fingerprint).not.toBe(plainTargetFingerprint);
+  });
+
+  it('fails closed for disabled, Hermes, unnamed, bulk, and stopped interaction attempts', async () => {
+    const body = JSON.stringify({
+      operationId: 'op_denied_route',
+      approvalId: 'approval_denied_route',
+      approvedAt: new Date().toISOString(),
+      targetPostId: '1900000000000000001',
+      text: '送信してはいけない本文',
+      inboundOrMentionAttested: true,
+    });
+    const headers = {
+      'content-type': 'application/json',
+      'X-Human-Approval-Key': 'integration-human-key-with-at-least-32-bytes',
+    };
+    expect((await request('/api/cubelic/interactions/reply', { method: 'POST', headers, body })).status).toBe(423);
+
+    bindings.CUBELIC_HUMAN_INTERACTIONS_ENABLED = 'true';
+    bindings.HUMAN_INTERACTIONS_RELEASE_APPROVED = 'true';
+    bindings.STAGING_HUMAN_INTERACTIONS_SMOKE_VERIFIED = 'true';
+    bindings.CUBELIC_PHASE3_DELIVERY_MODE = 'staging_fake';
+    bindings.WORKER_URL = 'https://x-harness-worker-staging.yoshihiro-fukiya.workers.dev';
+    expect((await request('/api/cubelic/interactions/reply', {
+      method: 'POST',
+      headers: { ...headers, 'X-Test-Actor': 'hermes' },
+      body,
+    })).status).toBe(403);
+    expect((await request('/api/cubelic/interactions/reply', {
+      method: 'POST',
+      headers: { ...headers, 'X-Test-Global': 'true' },
+      body,
+    })).status).toBe(403);
+    expect((await request('/api/cubelic/interactions/reply', {
+      method: 'POST',
+      headers,
+      body,
+    })).status).toBe(403);
+    expect((await request('/api/cubelic/interactions/reply', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        operationId: 'op_bulk_route',
+        approvalId: 'approval_bulk_route',
+        approvedAt: new Date().toISOString(),
+        targetPostId: '1900000000000000001',
+        targets: ['1900000000000000001', '1900000000000000002'],
+        text: '一括返信',
+        inboundOrMentionAttested: true,
+      }),
+    })).status).toBe(422);
+    expect((await db.prepare(
+      'SELECT COUNT(*) AS count FROM cubelic_interaction_fingerprint_key_state',
+    ).first<{ count: number }>())?.count).toBe(0);
+
+    bindings.GLOBAL_PUBLISHING_DISABLED = 'true';
+    expect((await request('/api/cubelic/interactions/reply', { method: 'POST', headers, body })).status).toBe(423);
+    expect(executeInteraction).not.toHaveBeenCalled();
+  });
+
+  it('never retries an interaction whose external outcome is unknown', async () => {
+    bindings.CUBELIC_HUMAN_INTERACTIONS_ENABLED = 'true';
+    bindings.HUMAN_INTERACTIONS_RELEASE_APPROVED = 'true';
+    bindings.STAGING_HUMAN_INTERACTIONS_SMOKE_VERIFIED = 'true';
+    bindings.CUBELIC_PHASE3_DELIVERY_MODE = 'staging_fake';
+    bindings.WORKER_URL = 'https://x-harness-worker-staging.yoshihiro-fukiya.workers.dev';
+    executeInteraction.mockRejectedValueOnce(new Error('simulated transport loss'));
+    const unknownPath = '/api/cubelic/interactions/reply';
+    const unknownBody = {
+      operationId: 'op_unknown_route',
+      approvalId: 'approval_unknown_route',
+      approvedAt: new Date().toISOString(),
+      targetPostId: '1900000000000000011',
+      text: '結果不明時に再送しない本文',
+      inboundOrMentionAttested: true,
+    };
+    const requestUnknown = async () => request(unknownPath, {
+      method: 'POST',
+      headers: await interactionHeaders(unknownPath, unknownBody),
+      body: JSON.stringify(unknownBody),
+    });
+
+    expect((await requestUnknown()).status).toBe(409);
+    const retry = await requestUnknown();
+    expect(retry.status).toBe(409);
+    await expect(retry.json()).resolves.toMatchObject({ code: 'interaction_outcome_unknown' });
+    expect(executeInteraction).toHaveBeenCalledOnce();
+    expect((await db.prepare(
+      "SELECT COUNT(*) AS count FROM cubelic_audit_logs WHERE action = 'interaction.outcome_unknown' AND entity_id = ?",
+    ).bind('op_unknown_route').first<{ count: number }>())?.count).toBe(1);
+  });
+
+  it('records a definitive adapter rejection as failed rather than outcome unknown', async () => {
+    bindings.CUBELIC_HUMAN_INTERACTIONS_ENABLED = 'true';
+    bindings.HUMAN_INTERACTIONS_RELEASE_APPROVED = 'true';
+    bindings.STAGING_HUMAN_INTERACTIONS_SMOKE_VERIFIED = 'true';
+    bindings.CUBELIC_PHASE3_DELIVERY_MODE = 'staging_fake';
+    bindings.WORKER_URL = 'https://x-harness-worker-staging.yoshihiro-fukiya.workers.dev';
+    executeInteraction.mockRejectedValueOnce(new PublicationPolicyError(
+      'interaction_delivery_rejected',
+      'simulated definitive rejection',
+    ));
+    const path = '/api/cubelic/interactions/like';
+    const body = {
+      operationId: 'op_rejected_route',
+      approvalId: 'approval_rejected_route',
+      approvedAt: new Date().toISOString(),
+      targetPostId: '1900000000000000012',
+    };
+    const send = async () => request(path, {
+      method: 'POST',
+      headers: await interactionHeaders(path, body),
+      body: JSON.stringify(body),
+    });
+
+    expect((await send()).status).toBe(422);
+    const retry = await send();
+    expect(retry.status).toBe(409);
+    await expect(retry.json()).resolves.toMatchObject({ code: 'interaction_previously_failed' });
+    expect(executeInteraction).toHaveBeenCalledOnce();
+    expect((await db.prepare(
+      "SELECT COUNT(*) AS count FROM cubelic_audit_logs WHERE action = 'interaction.failed' AND entity_id = ?",
+    ).bind(body.operationId).first<{ count: number }>())?.count).toBe(1);
+    expect((await db.prepare(
+      "SELECT COUNT(*) AS count FROM cubelic_audit_logs WHERE action = 'interaction.outcome_unknown' AND entity_id = ?",
+    ).bind(body.operationId).first<{ count: number }>())?.count).toBe(0);
   });
 
   it('streams an approved media body to its immutable R2 key without granting Hermes approval authority', async () => {

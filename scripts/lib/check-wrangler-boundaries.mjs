@@ -48,6 +48,32 @@ export function validateWranglerBoundaries(wrangler) {
     if (values.CUBELIC_SAFE_MODE !== 'true') {
       violations.push(`${prefix} must keep CUBELIC_SAFE_MODE=true`);
     }
+    if (values.CUBELIC_HUMAN_INTERACTIONS_ENABLED === 'true') {
+      if (!/^[A-Za-z0-9][A-Za-z0-9._-]{2,63}$/.test(values.INTERACTION_FINGERPRINT_KEY_VERSION ?? '')) {
+        violations.push(`${prefix} named-human interactions require an explicit fingerprint key version`);
+      }
+      const stagingInteractionSmoke = environment === 'staging'
+        && values.CUBELIC_HUMAN_INTERACTIONS_SMOKE_MODE === 'true'
+        && values.CUBELIC_PHASE3_DELIVERY_MODE === 'staging_fake';
+      const verifiedInteractionRelease = values.HUMAN_INTERACTIONS_RELEASE_APPROVED === 'true'
+        && values.STAGING_HUMAN_INTERACTIONS_SMOKE_VERIFIED === 'true';
+      if (!stagingInteractionSmoke && !verifiedInteractionRelease) {
+        violations.push(`${prefix} named-human interactions require release approval and verified staging smoke`);
+      }
+      if (values.GLOBAL_PUBLISHING_DISABLED !== 'false') {
+        violations.push(`${prefix} named-human interactions require GLOBAL_PUBLISHING_DISABLED=false`);
+      }
+    } else if (
+      values.CUBELIC_HUMAN_INTERACTIONS_ENABLED !== 'false'
+      || values.CUBELIC_HUMAN_INTERACTIONS_SMOKE_MODE !== 'false'
+      || values.HUMAN_INTERACTIONS_RELEASE_APPROVED !== 'false'
+      || values.STAGING_HUMAN_INTERACTIONS_SMOKE_VERIFIED !== 'false'
+    ) {
+      violations.push(`${prefix} disabled named-human interactions must keep all interaction gates false`);
+    }
+    if (environment === 'production' && values.CUBELIC_HUMAN_INTERACTIONS_SMOKE_MODE !== 'false') {
+      violations.push(`${prefix} production must disable named-human interaction smoke mode`);
+    }
     if (values.CUBELIC_PHASE3_ENABLED === 'true') {
       if (values.GLOBAL_PUBLISHING_DISABLED !== 'false') {
         violations.push(`${prefix} Phase 3 requires GLOBAL_PUBLISHING_DISABLED=false`);

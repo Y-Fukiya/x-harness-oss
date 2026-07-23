@@ -27,7 +27,8 @@ D1 stop.
    `020-cubelic-phase3-publication.sql`, then
    `021-cubelic-publication-reconciliation.sql`, then
    `022-cubelic-operation-window-publication-lock.sql`, then
-   `027-cubelic-media-delivery.sql` to a backed-up D1 environment.
+   `027-cubelic-media-delivery.sql`, then
+   `028-cubelic-human-x-interactions.sql` to a backed-up D1 environment.
 3. Set `X_HARNESS_ACCOUNT_ID` to the selected `x_accounts.id`; do not use the public username.
 4. Keep `HERMES_RUNTIME_ENABLED=false` in Phase 1 and do not provision Hermes runtime credentials. If a later reviewed release enables it, give Hermes only `HERMES_ACCESS_TOKEN` (the MCP process prefers it over `X_HARNESS_API_KEY`). Give approval UI operators `HUMAN_APPROVAL_KEY`; never expose it to Hermes.
 5. Set `CORS_ALLOWED_ORIGINS` to the exact HTTPS approval-UI origin(s), comma-separated; wildcard origins fail closed.
@@ -58,6 +59,55 @@ Keep `MEDIA_RETENTION_POLICY_VERIFIED=false` until a bounded R2 lifecycle rule
 and the named-human incident quarantine/delete runbook have been exercised.
 For an incident, first activate the emergency stop, then call
 `POST /api/cubelic/media/:assetId/quarantine` with named-human approval proof.
+
+## Named-human interaction requests
+
+These routes remain disabled until migration 028 and the separately reviewed
+interaction release gates are complete:
+
+- `POST /api/cubelic/interactions/reply`
+- `POST /api/cubelic/interactions/dm-reply`
+- `POST /api/cubelic/interactions/like`
+- `POST /api/cubelic/interactions/follow`
+- `POST /api/cubelic/interactions/unfollow`
+
+Every request uses a unique `operationId` and `approvalId`, an `approvedAt`
+timestamp no older than ten minutes, the named staff credential,
+`X-Human-Approval-Key`, and `X-Interaction-Approval-Proof`. Compute the latter
+as lowercase hex HMAC-SHA256 with `HUMAN_APPROVAL_KEY` over:
+
+`interaction-approval:v1:{request_sha256}:{staff_id}`
+
+Provision `INTERACTION_FINGERPRINT_KEY` as a distinct random secret of at least
+32 characters. Only the Worker uses it to produce domain-separated persisted
+HMAC fingerprints; never expose it to the browser or operator. Set
+`INTERACTION_FINGERPRINT_KEY_VERSION` to the reviewed deployment version. The
+first request pins a non-secret key commitment and that version in D1. Never
+change either value in place: disable interactions and complete a reviewed D1
+migration/duplicate-domain reconciliation before any rotation.
+
+`request_sha256` is lowercase hex SHA-256 of the server-canonical JSON object
+with these exact key orders:
+
+- reply: `kind`, `operationId`, `approvalId`, `approvedAt`, `targetPostId`,
+  `text`, `inboundOrMentionAttested`, `operatorId`
+- DM reply: `kind`, `operationId`, `approvalId`, `approvedAt`,
+  `conversationId`, `inboundMessageId`, `text`, `recipientInitiated`,
+  `operatorId`
+- like: `kind`, `operationId`, `approvalId`, `approvedAt`, `targetPostId`,
+  `operatorId`
+- follow/unfollow: `kind`, `operationId`, `approvalId`, `approvedAt`,
+  `targetUserId`, `operatorId`
+
+Never log the canonical JSON, proof, target, conversation, inbound event, or
+message body. The operator UI should compute the proof locally only after its
+explicit one-operation confirmation.
+
+Reply requests require `inboundOrMentionAttested: true`. DM reply requests
+require `recipientInitiated: true` and the exact `inboundMessageId`. Unknown
+fields are rejected, and the same inbound post/DM event cannot be used with a
+new operation id. If a response reports `interaction_outcome_unknown`, inspect
+X read-only and do not issue a replacement operation.
 The route writes intent and completion audits around R2 deletion; the immutable
 D1 mapping remains as evidence and all later delivery attempts fail closed.
 The production preflight refuses media activation while this evidence is false.

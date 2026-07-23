@@ -15,6 +15,10 @@
   required and must be distinct.
 - For CI, provision a least-privilege `CLOUDFLARE_API_TOKEN`. For a manual release using Wrangler's encrypted OAuth store, run `wrangler whoami` for the intended account and only then set `CLOUDFLARE_AUTH_VERIFIED=true` in the release shell.
 - Keep `CUBELIC_SAFE_MODE=true`; give Hermes neither the API admin key nor the human approval key.
+- Configure `INTERACTION_FINGERPRINT_KEY_VERSION` even while named-human
+  interactions remain disabled. Before a later enablement, provision the
+  corresponding dedicated fingerprint key; never rotate the key or version
+  without a reviewed D1 migration that preserves the deduplication domain.
 - Configure an allowlisted production CORS origin before exposing the approval UI.
 - Production CORS must be exactly `https://ops.cubelic-fan.com`; the public fan-site origin is not an operator origin.
 - Keep `PRODUCTION_CONTENT_INGEST_ENABLED=false` for the base Phase 1 infrastructure release. Import the human-approved `cubelic.song-master.v1` and `cubelic.member-master.v1` contracts before any production setlist.
@@ -30,7 +34,8 @@
    `022-cubelic-operation-window-publication-lock.sql`, then
    `023-staff-key-hashes.sql`, then `024-line-connections.sql`, then
    `025-credential-key-state.sql`, then `026-external-mutation-idempotency.sql`,
-   then `027-cubelic-media-delivery.sql`
+   then `027-cubelic-media-delivery.sql`, then
+   `028-cubelic-human-x-interactions.sql`
    to staging D1, then run
    `STAGING_WORKER_URL=... STAGING_API_KEY=... pnpm smoke:staging` from an
    approved secret-bearing shell. Smoke must observe
@@ -86,7 +91,8 @@ Phase 3 is default-disabled. Do not combine its first enablement with unrelated 
 1. Apply migrations `020-cubelic-phase3-publication.sql`,
    `021-cubelic-publication-reconciliation.sql`, and
    `022-cubelic-operation-window-publication-lock.sql`, then
-   `027-cubelic-media-delivery.sql` to staging and keep both
+   `027-cubelic-media-delivery.sql`, then
+   `028-cubelic-human-x-interactions.sql` to staging and keep both
    stops active.
 2. Configure `CUBELIC_PHASE3_DELIVERY_MODE=staging_fake` only on the dedicated staging Worker, then configure exact reviewed `category:template_id` pairs in `CUBELIC_PHASE3_SCHEDULE_POLICIES`. Only `event_notice`, `event_reminder`, and `youtube_notice` may be allowlisted.
 3. Set `CUBELIC_PHASE3_ENABLED=true` and `GLOBAL_PUBLISHING_DISABLED=false` in staging, then use the human approval key to resume the D1 stop.
@@ -103,6 +109,14 @@ Phase 3 is default-disabled. Do not combine its first enablement with unrelated 
    set `CUBELIC_PHASE3_MEDIA_SMOKE_MODE=true`; turn it off before recording the
    evidence. Production rejects this smoke mode.
 9. Run production preflight with `CUBELIC_PHASE3_ENABLED=true`, `CUBELIC_PHASE3_DELIVERY_MODE=x`, `GLOBAL_PUBLISHING_DISABLED=false`, `PHASE3_RELEASE_APPROVED=true`, the reviewed policies, and `STAGING_PHASE3_SMOKE_VERIFIED=true`. Production must reject `staging_fake`.
-10. Back up D1, apply migrations 020, 021, 022, and 027, deploy Worker, verify Cron and
+10. Back up D1, apply migrations 020, 021, 022, 027, and 028, deploy Worker, verify Cron and
     `/api/cubelic/admin/status`, then deploy the operator UI.
 11. Resume the D1 stop only when a named operator is present. Publish one human-approved text draft, verify the returned X post manually, and keep the emergency-stop control visible throughout.
+12. Keep `CUBELIC_HUMAN_INTERACTIONS_ENABLED=false`,
+    `HUMAN_INTERACTIONS_RELEASE_APPROVED=false`, and
+    `STAGING_HUMAN_INTERACTIONS_SMOKE_VERIFIED=false` until a separate
+    one-by-one interaction smoke and production release review are recorded.
+    For the first smoke only, use the dedicated staging fake Worker with
+    `CUBELIC_HUMAN_INTERACTIONS_SMOKE_MODE=true`; turn it off before recording
+    `STAGING_HUMAN_INTERACTIONS_SMOKE_VERIFIED=true`. Production must keep the
+    smoke-mode flag false.

@@ -56,6 +56,18 @@ async function sha256Text(value: string): Promise<string> {
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
+async function hmacSha256Text(secret: string, value: string): Promise<string> {
+  const key = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign'],
+  );
+  const signature = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(value));
+  return Array.from(new Uint8Array(signature), (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
 export interface AuditInput {
   actor: AuditActor;
   action: string;
@@ -82,6 +94,316 @@ async function runCubelicMutation(db: D1Database, statements: D1PreparedStatemen
 
 export async function appendCubelicAudit(db: D1Database, input: AuditInput): Promise<void> {
   await cubelicAuditStatement(db, input).run();
+}
+
+export type CubelicHumanInteractionKind = 'reply' | 'dm_reply' | 'like' | 'follow' | 'unfollow';
+export type CubelicHumanInteractionStatus = 'executing' | 'completed' | 'failed' | 'outcome_unknown';
+
+export interface CubelicHumanInteractionRecord {
+  operationId: string;
+  kind: CubelicHumanInteractionKind;
+  requestFingerprint: string;
+  operatorId: string;
+  status: CubelicHumanInteractionStatus;
+  idempotentReplay: boolean;
+}
+
+interface CubelicHumanInteractionRow {
+  operation_id: string;
+  kind: CubelicHumanInteractionKind;
+  request_fingerprint: string;
+  interaction_fingerprint: string;
+  approval_fingerprint: string;
+  operator_id: string;
+  status: CubelicHumanInteractionStatus;
+}
+
+function humanInteractionRecord(
+  row: CubelicHumanInteractionRow,
+  idempotentReplay: boolean,
+): CubelicHumanInteractionRecord {
+  return {
+    operationId: row.operation_id,
+    kind: row.kind,
+    requestFingerprint: row.request_fingerprint,
+    operatorId: row.operator_id,
+    status: row.status,
+    idempotentReplay,
+  };
+}
+
+export async function verifyOrInitializeCubelicInteractionFingerprintKey(
+  db: D1Database,
+  input: { key: string; version: string },
+  correlationId: string,
+): Promise<void> {
+  if (input.key.length < 32 || !/^[A-Za-z0-9][A-Za-z0-9._-]{2,63}$/u.test(input.version)) {
+    throw new Error('Interaction fingerprint key configuration is invalid');
+  }
+  const commitment = await hmacSha256Text(
+    input.key,
+    'interaction-fingerprint-key-commitment:v1',
+  );
+  const existing = await db.prepare(
+    `SELECT key_version, key_commitment
+     FROM cubelic_interaction_fingerprint_key_state
+     WHERE id = 'primary'`,
+  ).first<{ key_version: string; key_commitment: string }>();
+  if (existing) {
+    if (existing.key_version !== input.version || existing.key_commitment !== commitment) {
+      throw new Error('Interaction fingerprint key rotation requires an explicit migration');
+    }
+    return;
+  }
+  const interactionCount = await db.prepare(
+    'SELECT COUNT(*) AS count FROM cubelic_human_x_interactions',
+  ).first<{ count: number }>();
+  if ((interactionCount?.count ?? 0) > 0) {
+    throw new Error('Interaction fingerprint key state requires audited recovery');
+  }
+  const timestamp = nowIso();
+  const nonce = crypto.randomUUID();
+  const insert = db.prepare(
+    `INSERT OR IGNORE INTO cubelic_interaction_fingerprint_key_state (
+      id, key_version, key_commitment, transition_nonce, updated_at
+    ) VALUES ('primary', ?, ?, ?, ?)`,
+  ).bind(input.version, commitment, nonce, timestamp);
+  const conditionalAudit = db.prepare(
+    `INSERT INTO cubelic_audit_logs (
+      audit_id, actor, action, entity_type, entity_id, before_json, after_json,
+      timestamp, correlation_id
+    )
+    SELECT ?, 'system', 'interaction.fingerprint_key_initialized',
+           'interaction_configuration', 'fingerprint_key', '{}', ?, ?, ?
+    WHERE EXISTS (
+      SELECT 1 FROM cubelic_interaction_fingerprint_key_state
+      WHERE id = 'primary' AND transition_nonce = ?
+    )`,
+  ).bind(
+    `aud_${crypto.randomUUID()}`,
+    JSON.stringify({ version: input.version }),
+    timestamp,
+    correlationId,
+    nonce,
+  );
+  await db.batch([insert, conditionalAudit]);
+  const initialized = await db.prepare(
+    `SELECT key_version, key_commitment
+     FROM cubelic_interaction_fingerprint_key_state
+     WHERE id = 'primary'`,
+  ).first<{ key_version: string; key_commitment: string }>();
+  if (
+    initialized?.key_version !== input.version
+    || initialized.key_commitment !== commitment
+  ) {
+    throw new Error('Interaction fingerprint key rotation requires an explicit migration');
+  }
+}
+
+export async function reserveCubelicHumanInteraction(
+  db: D1Database,
+  input: {
+    operationId: string;
+    kind: CubelicHumanInteractionKind;
+    requestFingerprint: string;
+    interactionFingerprint: string;
+    approvalFingerprint: string;
+    operatorId: string;
+  },
+  audit: AuditInput,
+): Promise<CubelicHumanInteractionRecord> {
+  const timestamp = nowIso();
+  const nonce = crypto.randomUUID();
+  const insert = db.prepare(
+    `INSERT OR IGNORE INTO cubelic_human_x_interactions (
+      operation_id, kind, request_fingerprint, interaction_fingerprint,
+      approval_fingerprint, operator_id, status, failure_code,
+      transition_nonce, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, 'executing', NULL, ?, ?, ?)`,
+  ).bind(
+    input.operationId,
+    input.kind,
+    input.requestFingerprint,
+    input.interactionFingerprint,
+    input.approvalFingerprint,
+    input.operatorId,
+    nonce,
+    timestamp,
+    timestamp,
+  );
+  const conditionalAudit = db.prepare(
+    `INSERT INTO cubelic_audit_logs (
+      audit_id, actor, action, entity_type, entity_id, before_json, after_json,
+      timestamp, correlation_id
+    )
+    SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?
+    WHERE EXISTS (
+      SELECT 1 FROM cubelic_human_x_interactions
+      WHERE operation_id = ? AND transition_nonce = ?
+    )`,
+  ).bind(
+    `aud_${crypto.randomUUID()}`,
+    audit.actor,
+    audit.action,
+    audit.entityType,
+    audit.entityId,
+    JSON.stringify(audit.before),
+    JSON.stringify(audit.after),
+    timestamp,
+    audit.correlationId,
+    input.operationId,
+    nonce,
+  );
+  await db.batch([insert, conditionalAudit]);
+  const row = await db.prepare(
+    `SELECT operation_id, kind, request_fingerprint, interaction_fingerprint,
+            approval_fingerprint, operator_id, status
+     FROM cubelic_human_x_interactions
+     WHERE operation_id = ? OR interaction_fingerprint = ? OR approval_fingerprint = ?
+     LIMIT 1`,
+  ).bind(
+    input.operationId,
+    input.interactionFingerprint,
+    input.approvalFingerprint,
+  ).first<CubelicHumanInteractionRow>();
+  if (!row) throw new Error('Human X interaction reservation failed');
+  if (row.operation_id !== input.operationId) {
+    if (row.approval_fingerprint === input.approvalFingerprint) {
+      throw new Error('Interaction approval was already consumed');
+    }
+    throw new Error('Interaction target was already handled');
+  }
+  if (row.request_fingerprint !== input.requestFingerprint || row.kind !== input.kind) {
+    throw new Error('Interaction operation id was already used for a different request');
+  }
+  if (row.operator_id !== input.operatorId) {
+    throw new Error('Interaction operation id belongs to another operator');
+  }
+  const inserted = Boolean(await db.prepare(
+    'SELECT 1 AS inserted FROM cubelic_human_x_interactions WHERE operation_id = ? AND transition_nonce = ?',
+  ).bind(input.operationId, nonce).first());
+  return humanInteractionRecord(row, !inserted);
+}
+
+export async function completeCubelicHumanInteraction(
+  db: D1Database,
+  input: { operationId: string },
+  audit: AuditInput,
+): Promise<CubelicHumanInteractionRecord> {
+  const timestamp = nowIso();
+  const nonce = crypto.randomUUID();
+  const update = db.prepare(
+    `UPDATE cubelic_human_x_interactions
+     SET status = 'completed', transition_nonce = ?, updated_at = ?
+     WHERE operation_id = ? AND status = 'executing'`,
+  ).bind(nonce, timestamp, input.operationId);
+  const conditionalAudit = db.prepare(
+    `INSERT INTO cubelic_audit_logs (
+      audit_id, actor, action, entity_type, entity_id, before_json, after_json,
+      timestamp, correlation_id
+    )
+    SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?
+    WHERE EXISTS (
+      SELECT 1 FROM cubelic_human_x_interactions
+      WHERE operation_id = ? AND transition_nonce = ? AND status = 'completed'
+    )`,
+  ).bind(
+    `aud_${crypto.randomUUID()}`,
+    audit.actor,
+    audit.action,
+    audit.entityType,
+    audit.entityId,
+    JSON.stringify(audit.before),
+    JSON.stringify(audit.after),
+    timestamp,
+    audit.correlationId,
+    input.operationId,
+    nonce,
+  );
+  await db.batch([update, conditionalAudit]);
+  const row = await db.prepare(
+    `SELECT operation_id, kind, request_fingerprint, interaction_fingerprint,
+            approval_fingerprint, operator_id, status
+     FROM cubelic_human_x_interactions WHERE operation_id = ?`,
+  ).bind(input.operationId).first<CubelicHumanInteractionRow>();
+  if (!row || row.status !== 'completed') throw new Error('Human X interaction completion transition failed');
+  return humanInteractionRecord(row, false);
+}
+
+export async function markCubelicHumanInteractionOutcomeUnknown(
+  db: D1Database,
+  operationId: string,
+  audit: AuditInput,
+): Promise<void> {
+  const timestamp = nowIso();
+  const nonce = crypto.randomUUID();
+  const update = db.prepare(
+    `UPDATE cubelic_human_x_interactions
+     SET status = 'outcome_unknown', transition_nonce = ?, updated_at = ?
+     WHERE operation_id = ? AND status = 'executing'`,
+  ).bind(nonce, timestamp, operationId);
+  const conditionalAudit = db.prepare(
+    `INSERT INTO cubelic_audit_logs (
+      audit_id, actor, action, entity_type, entity_id, before_json, after_json,
+      timestamp, correlation_id
+    )
+    SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?
+    WHERE EXISTS (
+      SELECT 1 FROM cubelic_human_x_interactions
+      WHERE operation_id = ? AND transition_nonce = ? AND status = 'outcome_unknown'
+    )`,
+  ).bind(
+    `aud_${crypto.randomUUID()}`,
+    audit.actor,
+    audit.action,
+    audit.entityType,
+    audit.entityId,
+    JSON.stringify(audit.before),
+    JSON.stringify(audit.after),
+    timestamp,
+    audit.correlationId,
+    operationId,
+    nonce,
+  );
+  await db.batch([update, conditionalAudit]);
+}
+
+export async function failCubelicHumanInteraction(
+  db: D1Database,
+  input: { operationId: string; failureCode: string },
+  audit: AuditInput,
+): Promise<void> {
+  const timestamp = nowIso();
+  const nonce = crypto.randomUUID();
+  const update = db.prepare(
+    `UPDATE cubelic_human_x_interactions
+     SET status = 'failed', failure_code = ?, transition_nonce = ?, updated_at = ?
+     WHERE operation_id = ? AND status = 'executing'`,
+  ).bind(input.failureCode, nonce, timestamp, input.operationId);
+  const conditionalAudit = db.prepare(
+    `INSERT INTO cubelic_audit_logs (
+      audit_id, actor, action, entity_type, entity_id, before_json, after_json,
+      timestamp, correlation_id
+    )
+    SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?
+    WHERE EXISTS (
+      SELECT 1 FROM cubelic_human_x_interactions
+      WHERE operation_id = ? AND transition_nonce = ? AND status = 'failed'
+    )`,
+  ).bind(
+    `aud_${crypto.randomUUID()}`,
+    audit.actor,
+    audit.action,
+    audit.entityType,
+    audit.entityId,
+    JSON.stringify(audit.before),
+    JSON.stringify(audit.after),
+    timestamp,
+    audit.correlationId,
+    input.operationId,
+    nonce,
+  );
+  await db.batch([update, conditionalAudit]);
 }
 
 export async function bootstrapCubelicOperator(

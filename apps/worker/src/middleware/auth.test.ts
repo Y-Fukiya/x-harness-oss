@@ -27,6 +27,9 @@ function app() {
   value.put('/api/cubelic/media/:id/body', (c) => c.json({
     actor: c.get('requestActor'),
   }));
+  value.post('/api/cubelic/interactions/reply', (c) => c.json({
+    actor: c.get('requestActor'),
+  }));
   return value;
 }
 
@@ -104,5 +107,23 @@ describe('Phase 3 Hermes authentication boundary', () => {
 
     expect((await request('false')).status).toBe(403);
     expect((await request('true')).status).toBe(403);
+  });
+
+  it('never allows Hermes to execute named-human interaction routes', async () => {
+    const response = await app().request(
+      'https://worker.test/api/cubelic/interactions/reply',
+      {
+        method: 'POST',
+        headers: { Authorization: 'Bearer hermes-secret-with-at-least-32-bytes' },
+      },
+      {
+        ...secureBindings,
+        HERMES_ACCESS_TOKEN: 'hermes-secret-with-at-least-32-bytes',
+        CUBELIC_HUMAN_INTERACTIONS_ENABLED: 'true',
+        HUMAN_INTERACTIONS_RELEASE_APPROVED: 'true',
+        STAGING_HUMAN_INTERACTIONS_SMOKE_VERIFIED: 'true',
+      } as Env['Bindings'],
+    );
+    expect(response.status).toBe(403);
   });
 });

@@ -22,6 +22,7 @@ import {
   createCubelicMedia,
   createCubelicPublicationJob,
   createCubelicPublishedPostMapping,
+  completeCubelicHumanInteraction,
   expireCubelicOperationWindowAndStop,
   getCubelicEmergencyStop,
   getCubelicOperationWindow,
@@ -32,6 +33,7 @@ import {
   handoffCubelicDraftAndStop,
   listCubelicDrafts,
   reserveCubelicDraftApproval,
+  reserveCubelicHumanInteraction,
   recordCubelicRejections,
   reconcileCubelicPublicationNotPublished,
   reconcileCubelicPublicationPublished,
@@ -40,6 +42,7 @@ import {
   setCubelicOperationWindow,
   updateCubelicDraftText,
   upsertCubelicSongMaster,
+  verifyOrInitializeCubelicInteractionFingerprintKey,
   saveCubelicMetrics,
   stageCubelicMediaObject,
   type AuditInput,
@@ -53,6 +56,7 @@ const migrationPaths = [
   fileURLToPath(new URL('../migrations/021-cubelic-publication-reconciliation.sql', import.meta.url)),
   fileURLToPath(new URL('../migrations/022-cubelic-operation-window-publication-lock.sql', import.meta.url)),
   fileURLToPath(new URL('../migrations/027-cubelic-media-delivery.sql', import.meta.url)),
+  fileURLToPath(new URL('../migrations/028-cubelic-human-x-interactions.sql', import.meta.url)),
 ];
 
 function audit(action: string, entityId: string): AuditInput {
@@ -913,5 +917,103 @@ describe('CUBΣLIC D1 integration', () => {
     await Promise.all([recordCubelicRejections(db, rejection), recordCubelicRejections(db, rejection)]);
     expect((await db.prepare("SELECT COUNT(*) AS count FROM cubelic_rejection_events WHERE correlation_id = 'corr_rejection_retry'").first<{ count: number }>())?.count).toBe(1);
     expect((await db.prepare("SELECT COUNT(*) AS count FROM cubelic_audit_logs WHERE action = 'rejection.recorded' AND correlation_id = 'corr_rejection_retry'").first<{ count: number }>())?.count).toBe(1);
+  });
+
+  it('reserves and completes one idempotent human interaction without storing targets or text in audit', async () => {
+    await setCubelicEmergencyStop(
+      db,
+      false,
+      'integration-operator',
+      audit('system.emergency_resume', 'human_interaction'),
+    );
+    const input = {
+      operationId: 'op_interaction_1',
+      kind: 'reply' as const,
+      requestFingerprint: 'a'.repeat(64),
+      interactionFingerprint: 'c'.repeat(64),
+      approvalFingerprint: 'd'.repeat(64),
+      operatorId: 'staff_1',
+    };
+    const first = await reserveCubelicHumanInteraction(db, input, audit('interaction.started', input.operationId));
+    expect(first).toMatchObject({ status: 'executing', idempotentReplay: false });
+
+    const concurrent = await reserveCubelicHumanInteraction(
+      db,
+      input,
+      audit('interaction.started', input.operationId),
+    );
+    expect(concurrent).toMatchObject({ status: 'executing', idempotentReplay: true });
+
+    await completeCubelicHumanInteraction(db, {
+      operationId: input.operationId,
+    }, audit('interaction.completed', input.operationId));
+
+    const replay = await reserveCubelicHumanInteraction(
+      db,
+      input,
+      audit('interaction.started', input.operationId),
+    );
+    expect(replay).toMatchObject({
+      status: 'completed',
+      idempotentReplay: true,
+    });
+    await expect(db.prepare(
+      "UPDATE cubelic_human_x_interactions SET status = 'executing' WHERE operation_id = ?",
+    ).bind(input.operationId).run()).rejects.toThrow(/invalid human X interaction transition/);
+    await expect(reserveCubelicHumanInteraction(db, {
+      ...input,
+      requestFingerprint: 'b'.repeat(64),
+    }, audit('interaction.started', input.operationId))).rejects.toThrow(/different request/);
+    await expect(reserveCubelicHumanInteraction(db, {
+      ...input,
+      operationId: 'op_interaction_2',
+      requestFingerprint: 'e'.repeat(64),
+      approvalFingerprint: 'f'.repeat(64),
+    }, audit('interaction.started', 'op_interaction_2'))).rejects.toThrow(/already handled/);
+
+    const audits = await db.prepare(
+      "SELECT action, before_json, after_json FROM cubelic_audit_logs WHERE entity_id = ? ORDER BY timestamp",
+    ).bind(input.operationId).all<{ action: string; before_json: string; after_json: string }>();
+    expect(audits.results.map((row) => row.action)).toEqual([
+      'interaction.started',
+      'interaction.completed',
+    ]);
+    expect(JSON.stringify(audits.results)).not.toContain('個別に確認した返信');
+    expect(JSON.stringify(audits.results)).not.toContain('1900000000000000001');
+  });
+
+  it('pins the interaction fingerprint key version and rejects silent rotation', async () => {
+    const key = 'integration-interaction-fingerprint-key-v1';
+    await verifyOrInitializeCubelicInteractionFingerprintKey(
+      db,
+      { key, version: 'integration-v1' },
+      'corr_fingerprint_key',
+    );
+    await verifyOrInitializeCubelicInteractionFingerprintKey(
+      db,
+      { key, version: 'integration-v1' },
+      'corr_fingerprint_key_retry',
+    );
+
+    const state = await db.prepare(
+      'SELECT key_version, key_commitment FROM cubelic_interaction_fingerprint_key_state',
+    ).first<{ key_version: string; key_commitment: string }>();
+    expect(state?.key_version).toBe('integration-v1');
+    expect(state?.key_commitment).toMatch(/^[0-9a-f]{64}$/);
+    expect((await db.prepare(
+      "SELECT COUNT(*) AS count FROM cubelic_audit_logs WHERE action = 'interaction.fingerprint_key_initialized'",
+    ).first<{ count: number }>())?.count).toBe(1);
+
+    await expect(verifyOrInitializeCubelicInteractionFingerprintKey(
+      db,
+      { key: 'integration-interaction-fingerprint-key-v2', version: 'integration-v2' },
+      'corr_fingerprint_key_rotation',
+    )).rejects.toThrow(/explicit migration/);
+    await expect(db.prepare(
+      "UPDATE cubelic_interaction_fingerprint_key_state SET key_version = 'tampered'",
+    ).run()).rejects.toThrow(/explicit migration/);
+    await expect(db.prepare(
+      'DELETE FROM cubelic_interaction_fingerprint_key_state',
+    ).run()).rejects.toThrow(/append-preserved/);
   });
 });

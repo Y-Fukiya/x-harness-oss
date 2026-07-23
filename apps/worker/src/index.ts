@@ -26,7 +26,11 @@ import { growthArticles } from './routes/growth-articles.js';
 import { cubelic } from './routes/cubelic.js';
 import { cubelicPhase1RouteGuard } from './cubelic/safety.js';
 import { resolveCorsOrigin } from './cubelic/cors.js';
-import type { CubelicPhase3AdapterFactory, CubelicXAdapterFactory } from './cubelic/adapter.js';
+import type {
+  CubelicHumanInteractionAdapterFactory,
+  CubelicPhase3AdapterFactory,
+  CubelicXAdapterFactory,
+} from './cubelic/adapter.js';
 import type { MediaBodyWriter } from './cubelic/media-delivery.js';
 import { processDueCubelicPublications } from './cubelic/adapter.js';
 import { lineConnections } from './routes/line-connections.js';
@@ -39,6 +43,8 @@ export type Env = {
     SESSION_SIGNING_KEY?: string;
     CREDENTIAL_ENCRYPTION_KEY: string;
     CREDENTIAL_ENCRYPTION_KEY_VERSION: string;
+    INTERACTION_FINGERPRINT_KEY?: string;
+    INTERACTION_FINGERPRINT_KEY_VERSION?: string;
     STAFF_KEY_PEPPER?: string;
     AUTH_RATE_LIMITER?: RateLimit;
     PUBLIC_ACTION_RATE_LIMITER?: RateLimit;
@@ -59,10 +65,14 @@ export type Env = {
     CUBELIC_PHASE3_MEDIA_ENABLED?: string;
     CUBELIC_PHASE3_MEDIA_SMOKE_MODE?: string;
     CUBELIC_PHASE3_SCHEDULE_POLICIES?: string;
+    CUBELIC_HUMAN_INTERACTIONS_ENABLED?: string;
+    CUBELIC_HUMAN_INTERACTIONS_SMOKE_MODE?: string;
     PHASE3_RELEASE_APPROVED?: string;
     STAGING_PHASE3_SMOKE_VERIFIED?: string;
     STAGING_PHASE3_MEDIA_SMOKE_VERIFIED?: string;
     MEDIA_RETENTION_POLICY_VERIFIED?: string;
+    HUMAN_INTERACTIONS_RELEASE_APPROVED?: string;
+    STAGING_HUMAN_INTERACTIONS_SMOKE_VERIFIED?: string;
     GLOBAL_PUBLISHING_DISABLED?: string;
     HUMAN_APPROVAL_KEY?: string;
     HERMES_ACCESS_TOKEN?: string;
@@ -76,6 +86,7 @@ export type Env = {
     requestActor?: 'human' | 'hermes';
     cubelicAdapterFactory?: CubelicXAdapterFactory;
     cubelicPhase3AdapterFactory?: CubelicPhase3AdapterFactory;
+    cubelicHumanInteractionAdapterFactory?: CubelicHumanInteractionAdapterFactory;
     cubelicMediaBodyWriter?: MediaBodyWriter;
     correlationId?: string;
   };
@@ -85,7 +96,13 @@ const app = new Hono<Env>();
 
 app.use('*', cors({
   origin: (origin, c) => resolveCorsOrigin(origin, (c.env as Env['Bindings']).CORS_ALLOWED_ORIGINS),
-  allowHeaders: ['Authorization', 'Content-Type', 'X-Correlation-Id', 'X-Human-Approval-Key'],
+  allowHeaders: [
+    'Authorization',
+    'Content-Type',
+    'X-Correlation-Id',
+    'X-Human-Approval-Key',
+    'X-Interaction-Approval-Proof',
+  ],
   allowMethods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   credentials: true,
   maxAge: 600,

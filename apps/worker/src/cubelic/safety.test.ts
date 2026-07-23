@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   isCubelicSafeMode,
+  isNamedHumanInteractionEnabled,
   isPhase1RouteBlocked,
   isPhase3PublicationEnabled,
   isPublishingGloballyDisabled,
@@ -97,5 +98,26 @@ describe('CUBΣLIC centralized Phase 1 route boundary', () => {
       '/api/posts',
       env({ CUBELIC_PHASE3_ENABLED: 'true' }),
     )).toBe(true);
+  });
+
+  it('allows interaction smoke only on the dedicated staging fake runtime', () => {
+    const staging = {
+      ENVIRONMENT: 'staging',
+      WORKER_URL: 'https://x-harness-worker-staging.yoshihiro-fukiya.workers.dev',
+      CUBELIC_PHASE3_DELIVERY_MODE: 'staging_fake',
+      CUBELIC_HUMAN_INTERACTIONS_ENABLED: 'true',
+      CUBELIC_HUMAN_INTERACTIONS_SMOKE_MODE: 'true',
+    } as const;
+    expect(isNamedHumanInteractionEnabled(env(staging))).toBe(true);
+    expect(isNamedHumanInteractionEnabled(env({
+      ...staging,
+      ENVIRONMENT: 'production',
+    }))).toBe(false);
+    expect(isNamedHumanInteractionEnabled(env({
+      ...staging,
+      CUBELIC_HUMAN_INTERACTIONS_SMOKE_MODE: 'false',
+      HUMAN_INTERACTIONS_RELEASE_APPROVED: 'true',
+      STAGING_HUMAN_INTERACTIONS_SMOKE_VERIFIED: 'true',
+    }))).toBe(true);
   });
 });

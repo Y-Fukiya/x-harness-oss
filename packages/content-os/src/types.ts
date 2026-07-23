@@ -344,3 +344,66 @@ export interface XPublishingAdapter {
   deletePost(): Promise<never>;
   getMetrics(postId: string): Promise<PostMetrics>;
 }
+
+export type HumanXInteractionInput =
+  | {
+      kind: 'reply';
+      operationId: string;
+      approvalId: string;
+      approvedAt: string;
+      targetPostId: string;
+      text: string;
+      inboundOrMentionAttested: true;
+      authorization: HumanXInteractionAuthorization;
+    }
+  | {
+      kind: 'dm_reply';
+      operationId: string;
+      approvalId: string;
+      approvedAt: string;
+      conversationId: string;
+      inboundMessageId: string;
+      text: string;
+      recipientInitiated: true;
+      authorization: HumanXInteractionAuthorization;
+    }
+  | {
+      kind: 'like';
+      operationId: string;
+      approvalId: string;
+      approvedAt: string;
+      targetPostId: string;
+      authorization: HumanXInteractionAuthorization;
+    }
+  | {
+      kind: 'follow' | 'unfollow';
+      operationId: string;
+      approvalId: string;
+      approvedAt: string;
+      targetUserId: string;
+      authorization: HumanXInteractionAuthorization;
+    };
+
+export interface HumanXInteractionAuthorization {
+  kind: 'human_individual';
+  approvalId: string;
+  operatorId: string;
+  approvedBy: string;
+  approvedAt: string;
+}
+
+export type HumanXInteractionApprovalRequest =
+  | Omit<Extract<HumanXInteractionInput, { kind: 'reply' }>, 'authorization'>
+  | Omit<Extract<HumanXInteractionInput, { kind: 'dm_reply' }>, 'authorization'>
+  | Omit<Extract<HumanXInteractionInput, { kind: 'like' }>, 'authorization'>
+  | Omit<Extract<HumanXInteractionInput, { kind: 'follow' | 'unfollow' }>, 'authorization'>;
+
+export interface HumanXInteractionResult {
+  status: 'completed';
+  externalId?: string;
+  idempotentReplay?: boolean;
+}
+
+export interface XHumanInteractionAdapter {
+  execute(input: HumanXInteractionInput): Promise<HumanXInteractionResult>;
+}

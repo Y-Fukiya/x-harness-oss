@@ -1,9 +1,11 @@
 import {
   Phase1XPublishingAdapter,
   Phase3XPublishingAdapter,
+  NamedHumanXInteractionAdapter,
   PublicationPolicyError,
   evaluateRights,
   type ContentCategory,
+  type HumanXInteractionInput,
 } from '@x-harness/content-os';
 import {
   completeCubelicPublicationJob,
@@ -28,7 +30,12 @@ import {
 import { XApiError, XClient } from '@x-harness/x-sdk';
 import type { Env } from '../index.js';
 import { MEDIA_SIZE_LIMITS } from './media-delivery.js';
-import { isPhase3MediaDeliveryEnabled, isPhase3PublicationEnabled, isStagingFakeDelivery } from './safety.js';
+import {
+  isNamedHumanInteractionEnabled,
+  isPhase3MediaDeliveryEnabled,
+  isPhase3PublicationEnabled,
+  isStagingFakeDelivery,
+} from './safety.js';
 
 export type CubelicXAdapterFactory = (
   db: D1Database,
@@ -53,6 +60,11 @@ export type CubelicPhase3AdapterFactory = (
   operatorId: string,
 ) => Phase3XPublishingAdapter;
 
+export type CubelicHumanInteractionAdapterFactory = (
+  env: Env['Bindings'],
+  operatorId: string,
+) => NamedHumanXInteractionAdapter;
+
 function buildXClient(account: {
   consumer_key: string | null;
   consumer_secret: string | null;
@@ -68,6 +80,76 @@ function buildXClient(account: {
         accessTokenSecret: account.access_token_secret,
       })
     : new XClient(account.access_token);
+}
+
+export const buildCubelicHumanInteractionAdapter: CubelicHumanInteractionAdapterFactory = (env, operatorId) => {
+  return new NamedHumanXInteractionAdapter({
+    enabled: isNamedHumanInteractionEnabled(env),
+    operatorId,
+    isEmergencyStopped: () => isCubelicPublicationStopped(env.DB),
+    write: async (input) => deliverHumanInteraction(env, input),
+  });
+};
+
+async function deliverHumanInteraction(
+  env: Env['Bindings'],
+  input: HumanXInteractionInput,
+): Promise<{ status: 'completed'; externalId?: string }> {
+  if (isStagingFakeDelivery(env)) {
+    return {
+      status: 'completed',
+      ...(['reply', 'dm_reply'].includes(input.kind)
+        ? { externalId: `staging_fake_${input.operationId}` }
+        : {}),
+    };
+  }
+  const accountId = env.X_HARNESS_ACCOUNT_ID;
+  if (!accountId || accountId === 'SET_AFTER_ACCOUNT_SETUP') {
+    throw new PublicationPolicyError(
+      'x_harness_account_not_configured',
+      'X Harness account mapping is not configured',
+    );
+  }
+  const account = await getXAccountById(env.DB, accountId, env.CREDENTIAL_ENCRYPTION_KEY);
+  if (!account) throw new PublicationPolicyError('x_account_not_found', 'Configured X account was not found');
+  const client = buildXClient(account);
+  try {
+    switch (input.kind) {
+      case 'reply': {
+        const tweet = await client.createTweet({
+          text: input.text,
+          reply: { in_reply_to_tweet_id: input.targetPostId },
+        });
+        await incrementApiUsage(env.DB, account.id, 'create_reply');
+        return { status: 'completed', externalId: tweet.id };
+      }
+      case 'dm_reply': {
+        const message = await client.sendDmToConversation(input.conversationId, input.text);
+        await incrementApiUsage(env.DB, account.id, 'send_dm_reply');
+        return { status: 'completed', externalId: message.dm_event_id };
+      }
+      case 'like':
+        await client.likeTweet(account.x_user_id, input.targetPostId);
+        await incrementApiUsage(env.DB, account.id, 'like_tweet');
+        return { status: 'completed' };
+      case 'follow':
+        await client.follow(account.x_user_id, input.targetUserId);
+        await incrementApiUsage(env.DB, account.id, 'follow_user');
+        return { status: 'completed' };
+      case 'unfollow':
+        await client.unfollow(account.x_user_id, input.targetUserId);
+        await incrementApiUsage(env.DB, account.id, 'unfollow_user');
+        return { status: 'completed' };
+    }
+  } catch (error) {
+    if (error instanceof XApiError && error.status >= 400 && error.status < 500) {
+      throw new PublicationPolicyError(
+        'interaction_delivery_rejected',
+        'X definitively rejected the interaction request',
+      );
+    }
+    throw error;
+  }
 }
 
 function schedulePolicies(value: string | undefined): Array<{ category: ContentCategory; templateId: string }> {

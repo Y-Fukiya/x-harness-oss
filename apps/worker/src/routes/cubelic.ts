@@ -3,6 +3,7 @@ import {
   ContentPolicyError,
   PublicationPolicyError,
   authorizeManualProductionInput,
+  canonicalHumanXInteractionApproval,
   assertDraftableEventState,
   assertDraftApprovalGates,
   assertEventTransition,
@@ -17,6 +18,8 @@ import {
   type ContentItem,
   type DraftCandidate,
   type EventRecord,
+  type HumanXInteractionInput,
+  type HumanXInteractionApprovalRequest,
   type RejectReason,
 } from '@x-harness/content-os';
 import {
@@ -30,8 +33,10 @@ import {
   createCubelicMedia,
   createCubelicManualAuthority,
   createCubelicPublishedPostMapping,
+  completeCubelicHumanInteraction,
   createCubelicSetlist,
   expireCubelicOperationWindowAndStop,
+  failCubelicHumanInteraction,
   findCubelicMediaByHash,
   getCubelicContent,
   getCubelicDraft,
@@ -56,11 +61,13 @@ import {
   listCubelicDrafts,
   listCubelicEvents,
   normalizeCubelicIso8601Timestamp,
+  markCubelicHumanInteractionOutcomeUnknown,
   saveCubelicMetrics,
   recordCubelicRejections,
   reconcileCubelicPublicationNotPublished,
   reconcileCubelicPublicationPublished,
   reserveCubelicDraftApproval,
+  reserveCubelicHumanInteraction,
   setCubelicDraftDecision,
   setCubelicEmergencyStop,
   setCubelicOperationWindow,
@@ -73,10 +80,19 @@ import {
   updateCubelicMediaReview,
   validateCubelicSetlistSongs,
   validateCubelicContentReferences,
+  verifyOrInitializeCubelicInteractionFingerprintKey,
 } from '@x-harness/db';
-import { buildCubelicPhase3XAdapter, buildCubelicXAdapter } from '../cubelic/adapter.js';
+import {
+  buildCubelicHumanInteractionAdapter,
+  buildCubelicPhase3XAdapter,
+  buildCubelicXAdapter,
+} from '../cubelic/adapter.js';
 import { MEDIA_SIZE_LIMITS, writeMediaBodyToR2 } from '../cubelic/media-delivery.js';
-import { isPhase3MediaDeliveryEnabled, isPhase3PublicationEnabled } from '../cubelic/safety.js';
+import {
+  isNamedHumanInteractionEnabled,
+  isPhase3MediaDeliveryEnabled,
+  isPhase3PublicationEnabled,
+} from '../cubelic/safety.js';
 import { parseContent, parseEvent, parseMedia, parseMemberMaster, parseSetlist, parseSongMaster } from '../cubelic/validation.js';
 import type { Env } from '../index.js';
 import { isStrongRuntimeSecret, secretsEqual } from '../security/session.js';
@@ -227,8 +243,25 @@ async function apiError(c: Context<Env>, error: unknown): Promise<Response> {
     return c.json({ success: false, error: error.message, code: error.code, rejectReasons: error.rejectReasons }, 422);
   }
   if (error instanceof PublicationPolicyError) {
-    const stopped = ['phase3_operation_disabled', 'emergency_stop_active'].includes(error.code);
-    const forbidden = ['human_publication_required', 'publication_operator_mismatch'].includes(error.code);
+    const stopped = [
+      'phase3_operation_disabled',
+      'human_interactions_disabled',
+      'emergency_stop_active',
+    ].includes(error.code);
+    const forbidden = [
+      'human_publication_required',
+      'publication_operator_mismatch',
+      'individual_human_approval_required',
+      'interaction_operator_mismatch',
+      'interaction_approval_invalid',
+      'interaction_approval_expired',
+    ].includes(error.code);
+    const conflict = [
+      'interaction_idempotency_conflict',
+      'interaction_outcome_unknown',
+      'interaction_previously_failed',
+    ].includes(error.code);
+    const serviceUnavailable = error.code === 'interaction_fingerprint_not_configured';
     console.error('cubelic_publication_rejected', {
       correlation_id: correlationId(c),
       actor: actor(c),
@@ -238,7 +271,7 @@ async function apiError(c: Context<Env>, error: unknown): Promise<Response> {
     });
     return c.json(
       { success: false, error: error.message, code: error.code },
-      stopped ? 423 : forbidden ? 403 : 422,
+      serviceUnavailable ? 503 : stopped ? 423 : forbidden ? 403 : conflict ? 409 : 422,
     );
   }
   const message = error instanceof Error ? error.message : 'Unexpected error';
@@ -258,6 +291,11 @@ async function apiError(c: Context<Env>, error: unknown): Promise<Response> {
 async function sha256Json(value: unknown): Promise<string> {
   const input = JSON.stringify(value);
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(input));
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+async function sha256Text(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
@@ -310,6 +348,10 @@ function isPhase3OperationalWrite(path: string): boolean {
     || /^\/api\/cubelic\/content\/[^/]+\/manual-authority$/.test(path)
     || /^\/api\/cubelic\/media\/[^/]+\/body$/.test(path)
     || /^\/api\/cubelic\/drafts\/[^/]+(?:\/(?:approve|reject|publish|schedule))?$/.test(path);
+}
+
+function isHumanInteractionWrite(path: string): boolean {
+  return /^\/api\/cubelic\/interactions\/(?:reply|dm-reply|like|follow|unfollow)$/.test(path);
 }
 
 const OPERATION_WINDOW_UNSCOPED_WRITES = new Set([
@@ -415,7 +457,10 @@ cubelic.use('/api/cubelic/*', async (c, next) => {
   if (envStopped || dbStopped) {
     return c.json({ success: false, error: 'Emergency stop is active', code: 'emergency_stop_active', source: envStopped ? 'environment' : 'database' }, 423);
   }
-  if (isPhase3PublicationEnabled(c.env) && isPhase3OperationalWrite(path)) return next();
+  if (
+    (isPhase3PublicationEnabled(c.env) && isPhase3OperationalWrite(path))
+    || (isNamedHumanInteractionEnabled(c.env) && isHumanInteractionWrite(path))
+  ) return next();
   const operationWindow = await getCubelicOperationWindow(c.env.DB);
   if (operationWindow && !operationWindow.active) {
     await closeCubelicOperationWindowAndStop(c.env.DB, 'system', { actor: 'system', action: 'system.operation_window_expired', entityType: 'system', entityId: 'operation_window', before: { eventId: operationWindow.eventId, expiresAt: operationWindow.expiresAt }, after: { stopped: true }, correlationId: correlationId(c) });
@@ -430,6 +475,366 @@ cubelic.use('/api/cubelic/*', async (c, next) => {
   }
   return next();
 });
+
+function assertInteractionOperationId(value: unknown): asserts value is string {
+  if (typeof value !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/.test(value)) {
+    throw new PublicationPolicyError(
+      'interaction_request_invalid',
+      'A valid single-operation operationId is required',
+    );
+  }
+}
+
+function assertInteractionApprovalId(value: unknown): asserts value is string {
+  if (typeof value !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/.test(value)) {
+    throw new PublicationPolicyError(
+      'interaction_approval_invalid',
+      'A unique per-operation approvalId is required',
+    );
+  }
+}
+
+function assertInteractionApprovalTime(value: unknown): asserts value is string {
+  if (typeof value !== 'string' || Number.isNaN(Date.parse(value))) {
+    throw new PublicationPolicyError(
+      'interaction_approval_invalid',
+      'A valid approval timestamp is required',
+    );
+  }
+  const age = Date.now() - Date.parse(value);
+  if (age < -60_000 || age > 10 * 60_000) {
+    throw new PublicationPolicyError(
+      'interaction_approval_expired',
+      'The per-operation approval must be issued within ten minutes',
+    );
+  }
+}
+
+function assertExactInteractionKeys(body: Record<string, unknown>, allowed: readonly string[]): void {
+  const allowedKeys = new Set(allowed);
+  if (Object.keys(body).some((key) => !allowedKeys.has(key))) {
+    throw new PublicationPolicyError(
+      'interaction_request_invalid',
+      'Unknown or bulk-shaped interaction fields are not allowed',
+    );
+  }
+}
+
+function parseInteractionAuthority(
+  body: Record<string, unknown>,
+  routeFields: readonly string[],
+): { operationId: string; approvalId: string; approvedAt: string } {
+  assertExactInteractionKeys(body, ['operationId', 'approvalId', 'approvedAt', ...routeFields]);
+  assertInteractionOperationId(body.operationId);
+  assertInteractionApprovalId(body.approvalId);
+  assertInteractionApprovalTime(body.approvedAt);
+  return {
+    operationId: body.operationId,
+    approvalId: body.approvalId,
+    approvedAt: body.approvedAt,
+  };
+}
+
+function assertXResourceId(value: unknown, field: string): asserts value is string {
+  if (typeof value !== 'string' || !/^[1-9][0-9]{4,29}$/.test(value)) {
+    throw new PublicationPolicyError('interaction_request_invalid', `${field} must be one numeric X resource id`);
+  }
+}
+
+function assertConversationId(value: unknown): asserts value is string {
+  if (typeof value !== 'string' || !/^[A-Za-z0-9_-]{5,128}$/.test(value)) {
+    throw new PublicationPolicyError(
+      'interaction_request_invalid',
+      'conversationId must identify one existing conversation',
+    );
+  }
+}
+
+function assertInteractionText(value: unknown): asserts value is string {
+  if (typeof value !== 'string' || value.trim().length === 0 || value.length > 10_000) {
+    throw new PublicationPolicyError(
+      'interaction_request_invalid',
+      'A non-empty individually reviewed text is required',
+    );
+  }
+}
+
+async function interactionApprovalProof(secret: string, value: string): Promise<string> {
+  const key = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign'],
+  );
+  const signature = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(value));
+  return Array.from(new Uint8Array(signature), (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+async function executeNamedHumanInteraction(
+  c: Context<Env>,
+  request: HumanXInteractionApprovalRequest,
+): Promise<Response> {
+  if (!isNamedHumanInteractionEnabled(c.env)) {
+    throw new PublicationPolicyError(
+      'human_interactions_disabled',
+      'Named-human X interactions are disabled',
+    );
+  }
+  const denied = await requireNamedHumanApproval(c);
+  if (denied) return denied;
+  const operatorId = namedHumanId(c);
+  const input = {
+    ...request,
+    authorization: {
+      kind: 'human_individual' as const,
+      approvalId: request.approvalId,
+      operatorId,
+      approvedBy: operatorId,
+      approvedAt: new Date(request.approvedAt).toISOString(),
+    },
+  } as HumanXInteractionInput;
+  const canonicalApproval = canonicalHumanXInteractionApproval(request, operatorId);
+  const approvalRequestDigest = await sha256Text(canonicalApproval);
+  const suppliedProof = c.req.header('X-Interaction-Approval-Proof') ?? '';
+  const expectedProof = await interactionApprovalProof(
+    c.env.HUMAN_APPROVAL_KEY!,
+    `interaction-approval:v1:${approvalRequestDigest}:${operatorId}`,
+  );
+  if (!await secretsEqual(expectedProof, suppliedProof)) {
+    throw new PublicationPolicyError(
+      'interaction_approval_invalid',
+      'The per-operation approval proof is invalid',
+    );
+  }
+  if (!isStrongRuntimeSecret(c.env.INTERACTION_FINGERPRINT_KEY)) {
+    throw new PublicationPolicyError(
+      'interaction_fingerprint_not_configured',
+      'Interaction privacy protection is not configured',
+    );
+  }
+  try {
+    await verifyOrInitializeCubelicInteractionFingerprintKey(c.env.DB, {
+      key: c.env.INTERACTION_FINGERPRINT_KEY,
+      version: c.env.INTERACTION_FINGERPRINT_KEY_VERSION ?? '',
+    }, correlationId(c));
+  } catch {
+    throw new PublicationPolicyError(
+      'interaction_fingerprint_not_configured',
+      'Interaction fingerprint key version is missing, changed, or requires audited recovery',
+    );
+  }
+  const requestFingerprint = await interactionApprovalProof(
+    c.env.INTERACTION_FINGERPRINT_KEY,
+    `interaction-request:v1:${canonicalApproval}`,
+  );
+  const interactionIdentity =
+    request.kind === 'reply'
+      ? { kind: request.kind, targetPostId: request.targetPostId }
+      : request.kind === 'dm_reply'
+        ? { kind: request.kind, inboundMessageId: request.inboundMessageId }
+        : 'targetPostId' in request
+          ? { kind: request.kind, targetPostId: request.targetPostId }
+          : { kind: request.kind, targetUserId: request.targetUserId };
+  const interactionFingerprint = await interactionApprovalProof(
+    c.env.INTERACTION_FINGERPRINT_KEY,
+    `interaction-identity:v1:${JSON.stringify(interactionIdentity)}`,
+  );
+  const approvalFingerprint = await interactionApprovalProof(
+    c.env.INTERACTION_FINGERPRINT_KEY,
+    `interaction-approval-id:v1:${JSON.stringify({ approvalId: request.approvalId, operatorId })}`,
+  );
+  let reserved: Awaited<ReturnType<typeof reserveCubelicHumanInteraction>>;
+  try {
+    reserved = await reserveCubelicHumanInteraction(c.env.DB, {
+      operationId: input.operationId,
+      kind: input.kind,
+      requestFingerprint,
+      interactionFingerprint,
+      approvalFingerprint,
+      operatorId,
+    }, {
+      actor: 'human',
+      action: 'interaction.started',
+      entityType: 'human_x_interaction',
+      entityId: input.operationId,
+      before: {},
+      after: { kind: input.kind, status: 'executing', operatorId },
+      correlationId: correlationId(c),
+    });
+  } catch (error) {
+    if (error instanceof Error && (
+      error.message.includes('different request')
+      || error.message.includes('another operator')
+      || error.message.includes('already consumed')
+      || error.message.includes('already handled')
+    )) {
+      throw new PublicationPolicyError(
+        'interaction_idempotency_conflict',
+        'The operationId is already bound to another approved interaction',
+      );
+    }
+    throw error;
+  }
+  if (reserved.status === 'completed') {
+    return c.json({
+      success: true,
+      data: {
+        operationId: reserved.operationId,
+        status: reserved.status,
+        idempotentReplay: true,
+      },
+    });
+  }
+  if (reserved.status === 'failed') {
+    throw new PublicationPolicyError(
+      'interaction_previously_failed',
+      'The prior interaction was definitively rejected and remains closed',
+    );
+  }
+  if (reserved.idempotentReplay || reserved.status === 'outcome_unknown') {
+    throw new PublicationPolicyError(
+      'interaction_outcome_unknown',
+      'The prior interaction attempt requires human reconciliation',
+    );
+  }
+  const adapter = (
+    c.get('cubelicHumanInteractionAdapterFactory')
+    ?? buildCubelicHumanInteractionAdapter
+  )(c.env, operatorId);
+  try {
+    const result = await adapter.execute(input);
+    await completeCubelicHumanInteraction(c.env.DB, {
+      operationId: input.operationId,
+    }, {
+      actor: 'human',
+      action: 'interaction.completed',
+      entityType: 'human_x_interaction',
+      entityId: input.operationId,
+      before: { status: 'executing' },
+      after: { kind: input.kind, status: 'completed', operatorId },
+      correlationId: correlationId(c),
+    });
+    return c.json({
+      success: true,
+      data: {
+        operationId: input.operationId,
+        status: 'completed',
+        externalId: result.externalId,
+        idempotentReplay: false,
+      },
+    }, 201);
+  } catch (error) {
+    if (error instanceof PublicationPolicyError) {
+      await failCubelicHumanInteraction(c.env.DB, {
+        operationId: input.operationId,
+        failureCode: error.code,
+      }, {
+        actor: 'human',
+        action: 'interaction.failed',
+        entityType: 'human_x_interaction',
+        entityId: input.operationId,
+        before: { status: 'executing' },
+        after: { kind: input.kind, status: 'failed', operatorId, failureCode: error.code },
+        correlationId: correlationId(c),
+      });
+      throw error;
+    }
+    await markCubelicHumanInteractionOutcomeUnknown(c.env.DB, input.operationId, {
+      actor: 'human',
+      action: 'interaction.outcome_unknown',
+      entityType: 'human_x_interaction',
+      entityId: input.operationId,
+      before: { status: 'executing' },
+      after: { kind: input.kind, status: 'outcome_unknown', operatorId },
+      correlationId: correlationId(c),
+    });
+    throw new PublicationPolicyError(
+      'interaction_outcome_unknown',
+      'The interaction outcome requires human reconciliation',
+    );
+  }
+}
+
+cubelic.post('/api/cubelic/interactions/reply', async (c) => {
+  try {
+    const body = await c.req.json<Record<string, unknown>>();
+    const authority = parseInteractionAuthority(
+      body,
+      ['targetPostId', 'text', 'inboundOrMentionAttested'],
+    );
+    assertXResourceId(body.targetPostId, 'targetPostId');
+    assertInteractionText(body.text);
+    if (body.inboundOrMentionAttested !== true) {
+      throw new PublicationPolicyError(
+        'reply_inbound_attestation_required',
+        'Reply requires a named-human attestation that the post is inbound or mentions the account',
+      );
+    }
+    return await executeNamedHumanInteraction(c, {
+      kind: 'reply',
+      ...authority,
+      targetPostId: body.targetPostId,
+      text: body.text,
+      inboundOrMentionAttested: true,
+    });
+  } catch (error) { return apiError(c, error); }
+});
+
+cubelic.post('/api/cubelic/interactions/dm-reply', async (c) => {
+  try {
+    const body = await c.req.json<Record<string, unknown>>();
+    const authority = parseInteractionAuthority(
+      body,
+      ['conversationId', 'inboundMessageId', 'text', 'recipientInitiated'],
+    );
+    assertConversationId(body.conversationId);
+    assertXResourceId(body.inboundMessageId, 'inboundMessageId');
+    assertInteractionText(body.text);
+    if (body.recipientInitiated !== true) {
+      throw new PublicationPolicyError(
+        'dm_recipient_initiation_required',
+        'DM replies require an existing recipient-initiated conversation',
+      );
+    }
+    return await executeNamedHumanInteraction(c, {
+      kind: 'dm_reply',
+      ...authority,
+      conversationId: body.conversationId,
+      inboundMessageId: body.inboundMessageId,
+      text: body.text,
+      recipientInitiated: true,
+    });
+  } catch (error) { return apiError(c, error); }
+});
+
+cubelic.post('/api/cubelic/interactions/like', async (c) => {
+  try {
+    const body = await c.req.json<Record<string, unknown>>();
+    const authority = parseInteractionAuthority(body, ['targetPostId']);
+    assertXResourceId(body.targetPostId, 'targetPostId');
+    return await executeNamedHumanInteraction(c, {
+      kind: 'like',
+      ...authority,
+      targetPostId: body.targetPostId,
+    });
+  } catch (error) { return apiError(c, error); }
+});
+
+for (const kind of ['follow', 'unfollow'] as const) {
+  cubelic.post(`/api/cubelic/interactions/${kind}`, async (c) => {
+    try {
+      const body = await c.req.json<Record<string, unknown>>();
+      const authority = parseInteractionAuthority(body, ['targetUserId']);
+      assertXResourceId(body.targetUserId, 'targetUserId');
+      return await executeNamedHumanInteraction(c, {
+        kind,
+        ...authority,
+        targetUserId: body.targetUserId,
+      });
+    } catch (error) { return apiError(c, error); }
+  });
+}
 
 cubelic.post('/api/cubelic/events', async (c) => {
   try {
@@ -1382,6 +1787,11 @@ cubelic.get('/api/cubelic/admin/status', async (c) => {
       publishingEnabled: operational,
       schedulingEnabled: operational,
       mediaDeliveryEnabled: operational && isPhase3MediaDeliveryEnabled(c.env),
+      namedHumanInteractionsEnabled: isNamedHumanInteractionEnabled(c.env)
+        && c.env.GLOBAL_PUBLISHING_DISABLED === 'false'
+        && !stopState.stopped,
+      namedHumanInteractionSmokeMode: c.env.ENVIRONMENT === 'staging'
+        && c.env.CUBELIC_HUMAN_INTERACTIONS_SMOKE_MODE === 'true',
     },
   });
 });

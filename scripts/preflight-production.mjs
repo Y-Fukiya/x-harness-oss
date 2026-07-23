@@ -9,6 +9,7 @@ const productionContentIngestEnabled = process.env.PRODUCTION_CONTENT_INGEST_ENA
 const cloudflareAuthVerified = process.env.CLOUDFLARE_AUTH_VERIFIED === 'true';
 const phase3Enabled = process.env.CUBELIC_PHASE3_ENABLED === 'true';
 const phase3MediaEnabled = process.env.CUBELIC_PHASE3_MEDIA_ENABLED === 'true';
+const humanInteractionsEnabled = process.env.CUBELIC_HUMAN_INTERACTIONS_ENABLED === 'true';
 const requiredSecrets = [
   'API_KEY',
   'HUMAN_APPROVAL_KEY',
@@ -17,8 +18,9 @@ const requiredSecrets = [
   'CREDENTIAL_ENCRYPTION_KEY',
 ];
 if (hermesRuntimeEnabled) requiredSecrets.push('HERMES_ACCESS_TOKEN');
+if (humanInteractionsEnabled) requiredSecrets.push('INTERACTION_FINGERPRINT_KEY');
 
-for (const name of ['HERMES_RUNTIME_ENABLED', 'PRODUCTION_CONTENT_INGEST_ENABLED', 'PRODUCTION_INPUTS_VALIDATED', 'PRODUCTION_LP_MAPPING_VALIDATED', 'CLOUDFLARE_AUTH_VERIFIED', 'CUBELIC_PHASE3_ENABLED', 'CUBELIC_PHASE3_MEDIA_ENABLED', 'CUBELIC_PHASE3_MEDIA_SMOKE_MODE', 'PHASE3_RELEASE_APPROVED', 'STAGING_PHASE3_SMOKE_VERIFIED', 'STAGING_PHASE3_MEDIA_SMOKE_VERIFIED', 'MEDIA_RETENTION_POLICY_VERIFIED']) {
+for (const name of ['HERMES_RUNTIME_ENABLED', 'PRODUCTION_CONTENT_INGEST_ENABLED', 'PRODUCTION_INPUTS_VALIDATED', 'PRODUCTION_LP_MAPPING_VALIDATED', 'CLOUDFLARE_AUTH_VERIFIED', 'CUBELIC_PHASE3_ENABLED', 'CUBELIC_PHASE3_MEDIA_ENABLED', 'CUBELIC_PHASE3_MEDIA_SMOKE_MODE', 'CUBELIC_HUMAN_INTERACTIONS_ENABLED', 'CUBELIC_HUMAN_INTERACTIONS_SMOKE_MODE', 'PHASE3_RELEASE_APPROVED', 'STAGING_PHASE3_SMOKE_VERIFIED', 'STAGING_PHASE3_MEDIA_SMOKE_VERIFIED', 'MEDIA_RETENTION_POLICY_VERIFIED', 'HUMAN_INTERACTIONS_RELEASE_APPROVED', 'STAGING_HUMAN_INTERACTIONS_SMOKE_VERIFIED']) {
   if (process.env[name] && !['true', 'false'].includes(process.env[name])) {
     errors.push(`${name} must be true or false when set`);
   }
@@ -43,6 +45,9 @@ if (process.env.CREDENTIAL_ENCRYPTION_KEY) {
 if (!/^[A-Za-z0-9][A-Za-z0-9._-]{2,63}$/u.test(process.env.CREDENTIAL_ENCRYPTION_KEY_VERSION ?? '')) {
   errors.push('CREDENTIAL_ENCRYPTION_KEY_VERSION must be an explicit version identifier');
 }
+if (!/^[A-Za-z0-9][A-Za-z0-9._-]{2,63}$/u.test(process.env.INTERACTION_FINGERPRINT_KEY_VERSION ?? '')) {
+  errors.push('INTERACTION_FINGERPRINT_KEY_VERSION must be an explicit version identifier');
+}
 if (process.env.CLOUDFLARE_API_TOKEN && process.env.CLOUDFLARE_API_TOKEN.length < 32) {
   errors.push('CLOUDFLARE_API_TOKEN is shorter than the 32-character production minimum');
 }
@@ -57,6 +62,7 @@ const authorizationSecretNames = [
   'CREDENTIAL_ENCRYPTION_KEY',
 ];
 if (hermesRuntimeEnabled) authorizationSecretNames.push('HERMES_ACCESS_TOKEN');
+if (humanInteractionsEnabled) authorizationSecretNames.push('INTERACTION_FINGERPRINT_KEY');
 const authorizationSecrets = authorizationSecretNames.map((name) => process.env[name]).filter(Boolean);
 if (new Set(authorizationSecrets).size !== authorizationSecrets.length) {
   errors.push(`${authorizationSecretNames.join(', ')} must be distinct`);
@@ -88,8 +94,11 @@ if (phase3Enabled) {
   })) {
     errors.push('CUBELIC_PHASE3_SCHEDULE_POLICIES must contain reviewed category:template_id pairs');
   }
-} else if (process.env.GLOBAL_PUBLISHING_DISABLED !== 'true') {
+} else if (!humanInteractionsEnabled && process.env.GLOBAL_PUBLISHING_DISABLED !== 'true') {
   errors.push('GLOBAL_PUBLISHING_DISABLED must be explicitly true');
+}
+if (humanInteractionsEnabled && process.env.GLOBAL_PUBLISHING_DISABLED !== 'false') {
+  errors.push('GLOBAL_PUBLISHING_DISABLED must be explicitly false for named-human interactions');
 }
 if (phase3MediaEnabled && !phase3Enabled) {
   errors.push('CUBELIC_PHASE3_MEDIA_ENABLED requires CUBELIC_PHASE3_ENABLED=true');
@@ -102,6 +111,21 @@ if (phase3MediaEnabled && process.env.MEDIA_RETENTION_POLICY_VERIFIED !== 'true'
 }
 if (process.env.CUBELIC_PHASE3_MEDIA_SMOKE_MODE !== 'false') {
   errors.push('CUBELIC_PHASE3_MEDIA_SMOKE_MODE must be false for production');
+}
+if (humanInteractionsEnabled && process.env.HUMAN_INTERACTIONS_RELEASE_APPROVED !== 'true') {
+  errors.push('HUMAN_INTERACTIONS_RELEASE_APPROVED must be true for a named-human interaction release');
+}
+if (humanInteractionsEnabled && process.env.STAGING_HUMAN_INTERACTIONS_SMOKE_VERIFIED !== 'true') {
+  errors.push('STAGING_HUMAN_INTERACTIONS_SMOKE_VERIFIED must be true after named-human staging smoke succeeds');
+}
+if (!humanInteractionsEnabled && (
+  process.env.HUMAN_INTERACTIONS_RELEASE_APPROVED !== 'false'
+  || process.env.STAGING_HUMAN_INTERACTIONS_SMOKE_VERIFIED !== 'false'
+)) {
+  errors.push('disabled named-human interactions must keep release and staging-smoke gates false');
+}
+if (process.env.CUBELIC_HUMAN_INTERACTIONS_SMOKE_MODE !== 'false') {
+  errors.push('CUBELIC_HUMAN_INTERACTIONS_SMOKE_MODE must be false for production');
 }
 if (productionContentIngestEnabled && process.env.PRODUCTION_INPUTS_VALIDATED !== 'true') {
   errors.push('PRODUCTION_INPUTS_VALIDATED must be true before production content ingestion is enabled');
@@ -135,6 +159,7 @@ if (!/CORS_ALLOWED_ORIGINS\s*=\s*"https:\/\/ops\.cubelic-fan\.com"/.test(wrangle
 if (!/^CUBELIC_SAFE_MODE\s*=\s*"true"$/m.test(wrangler)) errors.push('wrangler.toml does not default CUBELIC_SAFE_MODE to true');
 const expectedProductionVars = {
   CREDENTIAL_ENCRYPTION_KEY_VERSION: process.env.CREDENTIAL_ENCRYPTION_KEY_VERSION,
+  INTERACTION_FINGERPRINT_KEY_VERSION: process.env.INTERACTION_FINGERPRINT_KEY_VERSION,
   CUBELIC_PHASE3_ENABLED: phase3Enabled ? 'true' : 'false',
   CUBELIC_PHASE3_DELIVERY_MODE: 'x',
   CUBELIC_PHASE3_MEDIA_ENABLED: phase3MediaEnabled ? 'true' : 'false',
@@ -142,11 +167,15 @@ const expectedProductionVars = {
   CUBELIC_PHASE3_SCHEDULE_POLICIES: phase3Enabled
     ? process.env.CUBELIC_PHASE3_SCHEDULE_POLICIES
     : '',
+  CUBELIC_HUMAN_INTERACTIONS_ENABLED: humanInteractionsEnabled ? 'true' : 'false',
   PHASE3_RELEASE_APPROVED: phase3Enabled ? 'true' : 'false',
   STAGING_PHASE3_SMOKE_VERIFIED: phase3Enabled ? 'true' : 'false',
   STAGING_PHASE3_MEDIA_SMOKE_VERIFIED: phase3MediaEnabled ? 'true' : 'false',
   MEDIA_RETENTION_POLICY_VERIFIED: phase3MediaEnabled ? 'true' : 'false',
-  GLOBAL_PUBLISHING_DISABLED: phase3Enabled ? 'false' : 'true',
+  HUMAN_INTERACTIONS_RELEASE_APPROVED: humanInteractionsEnabled ? 'true' : 'false',
+  STAGING_HUMAN_INTERACTIONS_SMOKE_VERIFIED: humanInteractionsEnabled ? 'true' : 'false',
+  CUBELIC_HUMAN_INTERACTIONS_SMOKE_MODE: 'false',
+  GLOBAL_PUBLISHING_DISABLED: phase3Enabled || humanInteractionsEnabled ? 'false' : 'true',
 };
 for (const [name, expected] of Object.entries(expectedProductionVars)) {
   if (productionVar(name) !== expected) {

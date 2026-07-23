@@ -12,6 +12,8 @@ const productionEnvironment = {
   STAFF_KEY_PEPPER: 'd'.repeat(32),
   CREDENTIAL_ENCRYPTION_KEY: 'MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY',
   CREDENTIAL_ENCRYPTION_KEY_VERSION: '2026-07-23-v1',
+  INTERACTION_FINGERPRINT_KEY: 'f'.repeat(32),
+  INTERACTION_FINGERPRINT_KEY_VERSION: '2026-07-24-v1',
   CLOUDFLARE_AUTH_VERIFIED: 'true',
   X_HARNESS_ACCOUNT_ID: '89f9bfc0-428c-480b-9cb3-9ba1698c30da',
   CUBELIC_SAFE_MODE: 'true',
@@ -19,11 +21,15 @@ const productionEnvironment = {
   CUBELIC_PHASE3_MEDIA_ENABLED: 'false',
   CUBELIC_PHASE3_MEDIA_SMOKE_MODE: 'false',
   CUBELIC_PHASE3_ENABLED: 'true',
+  CUBELIC_HUMAN_INTERACTIONS_ENABLED: 'false',
+  CUBELIC_HUMAN_INTERACTIONS_SMOKE_MODE: 'false',
   CUBELIC_PHASE3_SCHEDULE_POLICIES: 'event_notice:event_notice_manual_v1',
   PHASE3_RELEASE_APPROVED: 'true',
   STAGING_PHASE3_SMOKE_VERIFIED: 'true',
   STAGING_PHASE3_MEDIA_SMOKE_VERIFIED: 'false',
   MEDIA_RETENTION_POLICY_VERIFIED: 'false',
+  HUMAN_INTERACTIONS_RELEASE_APPROVED: 'false',
+  STAGING_HUMAN_INTERACTIONS_SMOKE_VERIFIED: 'false',
   GLOBAL_PUBLISHING_DISABLED: 'false',
   STAGING_SMOKE_VERIFIED: 'true',
   CORS_ALLOWED_ORIGINS: 'https://ops.cubelic-fan.com',
@@ -88,6 +94,15 @@ describe('production preflight phase boundaries', () => {
     );
   });
 
+  it('requires the interaction fingerprint key version to match the deployed production config', () => {
+    const result = preflight({ INTERACTION_FINGERPRINT_KEY_VERSION: '2026-07-24-v2' });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(
+      'wrangler production INTERACTION_FINGERPRINT_KEY_VERSION does not match',
+    );
+  });
+
   it('requires real input validation only when production content ingestion is enabled', () => {
     const missing = preflight({ PRODUCTION_CONTENT_INGEST_ENABLED: 'true' });
     const inputsOnly = preflight({
@@ -126,6 +141,22 @@ describe('production preflight phase boundaries', () => {
     );
     expect(result.stderr).toContain(
       'wrangler production CUBELIC_PHASE3_MEDIA_ENABLED does not match',
+    );
+  });
+
+  it('keeps named-human interactions disabled until their separate release review and smoke', () => {
+    const missingGates = preflight({
+      CUBELIC_HUMAN_INTERACTIONS_ENABLED: 'true',
+      INTERACTION_FINGERPRINT_KEY: '',
+    });
+    expect(missingGates.status).toBe(1);
+    expect(missingGates.stderr).toContain('HUMAN_INTERACTIONS_RELEASE_APPROVED must be true');
+    expect(missingGates.stderr).toContain('STAGING_HUMAN_INTERACTIONS_SMOKE_VERIFIED must be true');
+    expect(missingGates.stderr).toContain(
+      'wrangler production CUBELIC_HUMAN_INTERACTIONS_ENABLED does not match',
+    );
+    expect(missingGates.stderr).toContain(
+      'missing secret environment variable: INTERACTION_FINGERPRINT_KEY',
     );
   });
 

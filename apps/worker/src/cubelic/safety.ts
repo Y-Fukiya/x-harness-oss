@@ -53,6 +53,17 @@ export function isPhase3MediaDeliveryEnabled(env: Env['Bindings']): boolean {
     && Boolean(env.CUBELIC_MEDIA);
 }
 
+export function isNamedHumanInteractionEnabled(env: Env['Bindings']): boolean {
+  const stagingSmokeMode = env.ENVIRONMENT === 'staging'
+    && isStagingFakeDelivery(env)
+    && env.CUBELIC_HUMAN_INTERACTIONS_SMOKE_MODE === 'true';
+  const verifiedRelease = env.HUMAN_INTERACTIONS_RELEASE_APPROVED === 'true'
+    && env.STAGING_HUMAN_INTERACTIONS_SMOKE_VERIFIED === 'true';
+  return env.CUBELIC_HUMAN_INTERACTIONS_ENABLED === 'true'
+    && isPhase3DeliveryConfigured(env)
+    && (stagingSmokeMode || verifiedRelease);
+}
+
 export function isPhase1RouteBlocked(method: string, path: string, env: Env['Bindings']): boolean {
   void env;
   if (method === 'OPTIONS') return false;

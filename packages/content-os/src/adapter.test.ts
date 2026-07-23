@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
-import { Phase1XPublishingAdapter, Phase3XPublishingAdapter } from './adapter.js';
+import {
+  NamedHumanXInteractionAdapter,
+  Phase1XPublishingAdapter,
+  Phase3XPublishingAdapter,
+} from './adapter.js';
 
 describe('Phase1XPublishingAdapter', () => {
   it('creates only an inert draft', async () => {
@@ -195,5 +199,74 @@ describe('Phase3XPublishingAdapter', () => {
         approvedAt: '2026-07-23T00:00:00.000Z',
       },
     })).rejects.toMatchObject({ code: 'human_publication_required' });
+  });
+});
+
+describe('NamedHumanXInteractionAdapter', () => {
+  const reply = {
+    kind: 'reply' as const,
+    operationId: 'op_reply_1',
+    approvalId: 'approval_reply_1',
+    approvedAt: '2026-07-24T10:00:00.000Z',
+    targetPostId: '1900000000000000001',
+    text: '個別に確認した返信です。',
+    inboundOrMentionAttested: true as const,
+    authorization: {
+      kind: 'human_individual' as const,
+      approvalId: 'approval_reply_1',
+      operatorId: 'staff_1',
+      approvedBy: 'staff_1',
+      approvedAt: '2026-07-24T10:00:00.000Z',
+    },
+  };
+
+  it('executes one individually approved operation through the injected writer', async () => {
+    const write = vi.fn(async () => ({ status: 'completed' as const, externalId: '1900000000000000002' }));
+    const adapter = new NamedHumanXInteractionAdapter({
+      enabled: true,
+      operatorId: 'staff_1',
+      isEmergencyStopped: async () => false,
+      write,
+    });
+
+    await expect(adapter.execute(reply)).resolves.toEqual({
+      status: 'completed',
+      externalId: '1900000000000000002',
+    });
+    expect(write).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    ['disabled', { enabled: false }, 'human_interactions_disabled'],
+    ['emergency stopped', { isEmergencyStopped: async () => true }, 'emergency_stop_active'],
+  ])('rejects execution while %s', async (_label, override, code) => {
+    const adapter = new NamedHumanXInteractionAdapter({
+      enabled: true,
+      operatorId: 'staff_1',
+      isEmergencyStopped: async () => false,
+      write: async () => ({ status: 'completed' }),
+      ...override,
+    });
+    await expect(adapter.execute(reply)).rejects.toMatchObject({ code });
+  });
+
+  it('rejects mismatched or non-individual authority before the writer', async () => {
+    const write = vi.fn(async () => ({ status: 'completed' as const }));
+    const adapter = new NamedHumanXInteractionAdapter({
+      enabled: true,
+      operatorId: 'staff_1',
+      isEmergencyStopped: async () => false,
+      write,
+    });
+
+    await expect(adapter.execute({
+      ...reply,
+      authorization: { ...reply.authorization, approvedBy: 'staff_2' },
+    })).rejects.toMatchObject({ code: 'interaction_operator_mismatch' });
+    await expect(adapter.execute({
+      ...reply,
+      authorization: { ...reply.authorization, kind: 'automated' as never },
+    })).rejects.toMatchObject({ code: 'individual_human_approval_required' });
+    expect(write).not.toHaveBeenCalled();
   });
 });

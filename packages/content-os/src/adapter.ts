@@ -1,6 +1,8 @@
 import { Phase1OperationDisabledError, PublicationPolicyError } from './errors.js';
 import type {
   ContentCategory,
+  HumanXInteractionInput,
+  HumanXInteractionResult,
   PostMetrics,
   PublishInput,
   PublishResult,
@@ -8,6 +10,7 @@ import type {
   ScheduleResult,
   XDraftInput,
   XDraftResult,
+  XHumanInteractionAdapter,
   XPublishingAdapter,
 } from './types.js';
 
@@ -176,6 +179,56 @@ export class Phase3XPublishingAdapter implements XPublishingAdapter {
         `Publication rate policy rejected the operation${rate.reason ? `: ${rate.reason}` : ''}`,
       );
     }
+  }
+}
+
+export interface NamedHumanXInteractionAdapterOptions {
+  enabled: boolean;
+  operatorId: string;
+  isEmergencyStopped: () => Promise<boolean>;
+  write: (input: HumanXInteractionInput) => Promise<HumanXInteractionResult>;
+}
+
+export class NamedHumanXInteractionAdapter implements XHumanInteractionAdapter {
+  constructor(private readonly options: NamedHumanXInteractionAdapterOptions) {}
+
+  async execute(input: HumanXInteractionInput): Promise<HumanXInteractionResult> {
+    if (!this.options.enabled) {
+      throw new PublicationPolicyError(
+        'human_interactions_disabled',
+        'Named-human X interactions are disabled',
+      );
+    }
+    if (await this.options.isEmergencyStopped()) {
+      throw new PublicationPolicyError('emergency_stop_active', 'Emergency stop is active');
+    }
+    if (input.authorization.kind !== 'human_individual') {
+      throw new PublicationPolicyError(
+        'individual_human_approval_required',
+        'Each X interaction requires individual human approval',
+      );
+    }
+    if (
+      !input.authorization.operatorId
+      || input.authorization.operatorId !== this.options.operatorId
+      || input.authorization.operatorId !== input.authorization.approvedBy
+    ) {
+      throw new PublicationPolicyError(
+        'interaction_operator_mismatch',
+        'The executing operator must match the individual approver',
+      );
+    }
+    if (
+      !input.authorization.approvalId
+      || !input.authorization.approvedAt
+      || Number.isNaN(Date.parse(input.authorization.approvedAt))
+    ) {
+      throw new PublicationPolicyError(
+        'individual_human_approval_required',
+        'A valid individual approval timestamp is required',
+      );
+    }
+    return this.options.write(input);
   }
 }
 
