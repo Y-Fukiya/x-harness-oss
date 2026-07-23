@@ -4,12 +4,17 @@ import { execFileSync } from 'node:child_process';
 const baseUrl = process.env.STAGING_WORKER_URL?.replace(/\/$/u, '');
 const staffService = process.env.STAGING_STAFF_KEYCHAIN_SERVICE;
 const approvalService = process.env.STAGING_HUMAN_APPROVAL_KEYCHAIN_SERVICE;
+const operatorId = process.env.STAGING_OPERATOR_ID;
 
-if (!baseUrl || !staffService || !approvalService) {
+if (!baseUrl || !staffService || !approvalService || !operatorId) {
   console.error(
     'Set STAGING_WORKER_URL, STAGING_STAFF_KEYCHAIN_SERVICE, and '
-    + 'STAGING_HUMAN_APPROVAL_KEYCHAIN_SERVICE.',
+    + 'STAGING_HUMAN_APPROVAL_KEYCHAIN_SERVICE, and STAGING_OPERATOR_ID.',
   );
+  process.exit(2);
+}
+if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u.test(operatorId)) {
+  console.error('STAGING_OPERATOR_ID must be one D1 staff UUID.');
   process.exit(2);
 }
 const parsedBaseUrl = new URL(baseUrl);
@@ -125,17 +130,6 @@ async function executeInteraction(path, request, operatorId) {
 let resumed = false;
 let failure;
 try {
-  const profile = await json('/api/staff/me');
-  const operator = profile.body?.data;
-  if (
-    !profile.response.ok
-    || !operator?.id
-    || operator.id === 'env'
-    || !['admin', 'editor'].includes(operator.role)
-  ) {
-    throw new Error('A named staging admin/editor credential is required');
-  }
-
   const resume = await json('/api/cubelic/admin/emergency-resume', {
     method: 'POST',
     body: '{}',
@@ -190,13 +184,13 @@ try {
     }],
   ];
   for (const [path, request] of cases) {
-    await executeInteraction(path, request, operator.id);
+    await executeInteraction(path, request, operatorId);
   }
 
   const [replyPath, replyRequest] = cases[0];
   const replay = await json(replyPath, {
     method: 'POST',
-    headers: { 'X-Interaction-Approval-Proof': approvalProof(replyRequest, operator.id) },
+    headers: { 'X-Interaction-Approval-Proof': approvalProof(replyRequest, operatorId) },
     body: JSON.stringify(requestBody(replyRequest)),
   });
   if (
