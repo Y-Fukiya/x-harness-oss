@@ -15,7 +15,7 @@ function keychainSecret(service) {
 const environment = {
   ...process.env,
   PRODUCTION_WORKER_URL: process.env.PRODUCTION_WORKER_URL
-    ?? 'https://x-harness-worker-production.yoshihiro-fukiya.workers.dev',
+    ?? 'https://api.cubelic-fan.com',
   PRODUCTION_API_KEY: keychainSecret('CUBELIC Production API Key'),
   PRODUCTION_HUMAN_APPROVAL_KEY: keychainSecret('CUBELIC Production Human Approval Key'),
 };

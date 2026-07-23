@@ -11,6 +11,6 @@ function keychainSecret(service) {
   }
 }
 
-process.env.PRODUCTION_WORKER_URL ??= 'https://x-harness-worker-production.yoshihiro-fukiya.workers.dev';
+process.env.PRODUCTION_WORKER_URL ??= 'https://api.cubelic-fan.com';
 process.env.PRODUCTION_API_KEY = keychainSecret('CUBELIC Production Staff API Key');
 await import('./verify-production-safety.mjs');
