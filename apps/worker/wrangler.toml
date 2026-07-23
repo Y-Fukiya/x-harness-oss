@@ -1,7 +1,7 @@
 name = "x-harness-worker"
 main = "src/index.ts"
 compatibility_date = "2026-07-23"
-workers_dev = true
+workers_dev = false
 
 # Secrets are provisioned per environment with Wrangler and never stored here.
 
