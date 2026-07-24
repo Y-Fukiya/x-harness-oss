@@ -48,35 +48,51 @@ async function request(path, init = {}) {
   return { response, body };
 }
 
-let resumed = false;
+let stagingWindowPrepared = false;
 let failure;
 try {
+  const window = await request('/api/cubelic/admin/operation-window', {
+    method: 'POST',
+    body: JSON.stringify({
+      eventId: `evt_interaction_watch_smoke_${Date.now().toString(36)}`,
+      durationMinutes: 10,
+    }),
+  });
+  if (window.response.status !== 201) {
+    const code = typeof window.body?.code === 'string' ? ` (${window.body.code})` : '';
+    throw new Error(
+      `Staging operation window failed with HTTP ${window.response.status}${code}`,
+    );
+  }
+  stagingWindowPrepared = true;
+
   const resume = await request('/api/cubelic/admin/emergency-resume', {
     method: 'POST',
     body: '{}',
   });
   if (!resume.response.ok || resume.body?.data?.stopped !== false) {
-    throw new Error(`Staging emergency resume failed with HTTP ${resume.response.status}`);
+    const code = typeof resume.body?.code === 'string' ? ` (${resume.body.code})` : '';
+    throw new Error(
+      `Staging emergency resume failed with HTTP ${resume.response.status}${code}`,
+    );
   }
-  resumed = true;
-
   const existing = await request('/api/cubelic/interaction-watches');
   if (!existing.response.ok || !Array.isArray(existing.body?.data)) {
     throw new Error(`Watch list failed with HTTP ${existing.response.status}`);
   }
   if (existing.body.data.length !== 0) {
-    throw new Error('Watch smoke requires a fresh dedicated staging D1 database.');
+    throw new Error('Watch smoke requires newly migrated empty watch tables.');
   }
   const created = await request('/api/cubelic/interaction-watches', {
     method: 'POST',
-    body: JSON.stringify({ targetUsername: 'x_harness_watch_smoke' }),
+    body: JSON.stringify({ targetUsername: 'xh_watch_smoke' }),
   });
   if (created.response.status !== 201) {
     throw new Error(`Watch registration failed with HTTP ${created.response.status}`);
   }
   const watch = created.body?.data;
   if (
-    watch?.targetUsername !== 'x_harness_watch_smoke'
+    watch?.targetUsername !== 'xh_watch_smoke'
     || watch?.targetUserId !== '9900000000000000100'
   ) {
     throw new Error('Staging D1 already contains a non-smoke singleton watch.');
@@ -129,7 +145,7 @@ try {
 } catch (error) {
   failure = error;
 } finally {
-  if (resumed) {
+  if (stagingWindowPrepared) {
     const stop = await request('/api/cubelic/admin/emergency-stop', {
       method: 'POST',
       body: '{}',

@@ -21,6 +21,27 @@ describe('interaction-watch application-only credential boundary', () => {
     vi.unstubAllGlobals();
   });
 
+  it('uses a valid-length synthetic username only in staging smoke mode', async () => {
+    const stagingEnv = {
+      ...env(),
+      ENVIRONMENT: 'staging',
+      X_INTERACTION_WATCH_SMOKE_MODE: 'true',
+      X_INTERACTION_WATCH_BEARER_TOKEN: undefined,
+    } as Env['Bindings'];
+
+    await expect(
+      buildInteractionWatchReadAdapter(stagingEnv).verifyTargetUsername('xh_watch_smoke'),
+    ).resolves.toEqual({
+      targetUserId: '9900000000000000100',
+      verifiedUsername: 'xh_watch_smoke',
+    });
+    await expect(
+      buildInteractionWatchReadAdapter(stagingEnv).verifyTargetUsername('other_target'),
+    ).rejects.toMatchObject({
+      code: 'interaction_watch_smoke_target_invalid',
+    });
+  });
+
   it('accepts a valid application-only credential that X rejects for users/me', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(

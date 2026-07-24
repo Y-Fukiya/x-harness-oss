@@ -113,7 +113,7 @@ if (interactionWatchEnabled) {
     errors.push('X_INTERACTION_WATCH_RELEASE_APPROVED must be true for an interaction-watch release');
   }
   if (process.env.X_INTERACTION_WATCH_STAGING_SMOKE_VERIFIED !== 'true') {
-    errors.push('X_INTERACTION_WATCH_STAGING_SMOKE_VERIFIED must be true after a fresh-D1 staging smoke succeeds');
+    errors.push('X_INTERACTION_WATCH_STAGING_SMOKE_VERIFIED must be true after the empty-watch-table staging smoke succeeds');
   }
   if (process.env.X_INTERACTION_WATCH_PRIVACY_REVIEW_APPROVED !== 'true') {
     errors.push('X_INTERACTION_WATCH_PRIVACY_REVIEW_APPROVED must be true for an interaction-watch release');

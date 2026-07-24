@@ -266,6 +266,17 @@ describe('CUBΣLIC Worker API integration', () => {
     bindings.X_INTERACTION_WATCH_SMOKE_MODE = 'true';
     bindings.X_INTERACTION_WATCH_RELEASE_APPROVED = 'true';
     bindings.X_INTERACTION_WATCH_STAGING_SMOKE_VERIFIED = 'true';
+    await db.prepare(
+      `INSERT INTO cubelic_audit_logs (
+        audit_id, actor, action, entity_type, entity_id, before_json, after_json,
+        timestamp, correlation_id
+      ) VALUES (?, 'system', 'publication.completed', 'publication_job', ?,
+        '{}', '{}', '2026-01-01T00:00:00.000Z', ?)`,
+    ).bind(
+      'aud_historical_publication',
+      'historical_publication',
+      'corr_historical_publication',
+    ).run();
     discoverOriginalPosts.mockResolvedValue([
       {
         postId: '1900000000000000201',

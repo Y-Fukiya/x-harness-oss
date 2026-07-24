@@ -1861,7 +1861,8 @@ Codex
   `Unsupported Authentication`である場合だけapplication-onlyと判定し、
   その他の403を含む判定不能な場合は拒否する。
 - 手動・Cronとも通常は15分に1回、UTC日あたり96回を上限とする。
-  fresh-D1 staging smokeだけは間隔を短縮できるが日次上限は維持する。
+  新規migration直後の空の監視テーブルを使うstaging smokeだけは間隔を
+  短縮できるが日次上限は維持する。
 - 投稿・返信・DM・いいね・フォロー等のX書込み機能とは同時に有効化しない。
 - CronとHermesへX書込み権限を渡さない。
 - 候補画面はX上の対象投稿を人間が確認するリンクだけを提供し、

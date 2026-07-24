@@ -1002,7 +1002,11 @@ cubelic.get('/api/cubelic/interaction-watch-smoke-evidence', async (c) => {
       .first<{ count: number }>(),
     c.env.DB.prepare(
       `SELECT COUNT(*) AS count FROM cubelic_audit_logs
-       WHERE action LIKE 'publication.%' OR action LIKE 'interaction.%'`,
+       WHERE (action LIKE 'publication.%' OR action LIKE 'interaction.%')
+         AND timestamp >= COALESCE(
+           (SELECT MIN(created_at) FROM x_interaction_watches),
+           '9999-12-31T23:59:59.999Z'
+         )`,
     ).first<{ count: number }>(),
   ]);
   const bodyColumnPresent = columns.results.some(

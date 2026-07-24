@@ -142,11 +142,12 @@ write release.
    `X_INTERACTION_WATCH_PRIVACY_REVIEW_ID` and
    `X_INTERACTION_WATCH_REVIEWED_TARGET_USER_ID` in committed configuration.
 3. For the dedicated staging smoke only, enable the watch flag and staging smoke
-   mode on a fresh dedicated staging D1, disable every X-write capability,
+   mode against newly migrated empty watch tables, disable every X-write capability,
    record the privacy-review ID, resume the D1 stop with a named operator,
    register one synthetic target, poll twice, and require first poll=1 and
    second poll=0. Verify replies and Reposts are excluded and no post body or
-   X-write audit exists.
+   X-write audit exists after the watch registration timestamp. Historical
+   append-only audits in a shared staging D1 are outside this bounded evidence.
 4. Restore the D1 stop and disable smoke mode before recording
    `X_INTERACTION_WATCH_STAGING_SMOKE_VERIFIED=true`.
 5. Production requires a separate `X_INTERACTION_WATCH_RELEASE_APPROVED=true`,

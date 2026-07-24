@@ -145,7 +145,7 @@ export function buildInteractionWatchReadAdapter(
   ) {
     return {
       async verifyTargetUsername(username) {
-        if (username !== 'x_harness_watch_smoke') {
+        if (username !== 'xh_watch_smoke') {
           throw new PublicationPolicyError(
             'interaction_watch_smoke_target_invalid',
             'Staging watch smoke accepts only its synthetic target',

@@ -42,15 +42,18 @@ A future implementation must satisfy all of these conditions:
 6. Every mutation is append-only audited without post bodies, credentials,
    personal information, or approval proof contents.
 7. Emergency stop is fail-closed. The feature has its own default-disabled
-   production flag, fresh-D1 staging fake smoke evidence, release approval,
+   production flag, newly migrated empty-watch-table staging fake evidence,
+   release approval,
    privacy-review reference, and rate policy. Its release is mutually exclusive
    with every X-write release and uses a dedicated application-only read Bearer
    Token rather than any User Context write credential. Registration and every
    poll accept only X's structured `Unsupported Authentication` response from
    `/2/users/me`; a successful authentication or any other error is rejected.
    Normal manual and Cron polls share a
-   15-minute minimum interval and 96-per-UTC-day D1 limit; only fresh-D1 staging
-   smoke may bypass the interval.
+   15-minute minimum interval and 96-per-UTC-day D1 limit; only the one-time
+   empty-watch-table staging smoke may bypass the interval. X-write audit
+   evidence is bounded from the watch registration timestamp so historical
+   append-only staging audits cannot create a false failure.
 8. Production release requires a fresh review of X's current Automation Rules.
    If individually initiated Likes are no longer permitted, the Like portion is
    removed rather than bypassed.
