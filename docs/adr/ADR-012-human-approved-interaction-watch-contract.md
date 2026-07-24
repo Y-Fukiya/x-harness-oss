@@ -1,6 +1,6 @@
 # ADR-012: Human-approved interaction watch contract
 
-- Status: Accepted as a future-milestone contract; runtime implementation deferred
+- Status: Implemented for read-only monitoring and candidate display; X writes deferred
 - Date: 2026-07-24
 
 ## Context
@@ -9,18 +9,19 @@ An operator wants to monitor one specified X account, review each newly detected
 original post, and explicitly approve one Like plus one Repost. Detection may be
 periodic, but it must never create an X write.
 
-The active milestone permits later behavior only as interfaces and
-documentation. X's April 2026 automation rules also prohibit automated Likes.
-Consequently, neither polling nor an agent may approve or execute the action.
+The read-only milestone is explicitly approved. X's April 2026 automation rules
+prohibit automated Likes. Consequently, polling may only create review
+candidates, and neither polling nor an agent may approve or execute an X action.
 
 ## Decision
 
-The public type contracts are the least-privilege
+The runtime uses the least-privilege
 `XInteractionWatchReadAdapter` for detection and
 `XInteractionWatchPublishingAdapter`, which extends `XPublishingAdapter`, for
-named-human delivery. A poller must receive only the read contract. No Worker
-implementation, route, Cron registration, database migration, operator UI, or X
-client call is included in Phase 1.
+future named-human delivery. A poller receives only the read contract. The
+implemented Worker routes, Cron processor, D1 migration, and operator UI expose
+registration, detection, and candidate display only. No runtime implementation
+of `XInteractionWatchPublishingAdapter` exists.
 
 A future implementation must satisfy all of these conditions:
 
@@ -48,7 +49,7 @@ A future implementation must satisfy all of these conditions:
 
 ## Consequences
 
-Phase 1 can compile and review the boundary without creating an executable
-engagement feature. Advancing the active milestone is a separate explicit
-decision. That later implementation must be developed against fake adapters and
-must never contact X from tests.
+The system can detect and display candidates without creating an executable
+engagement feature. Any later X-write implementation remains a separate
+explicit milestone, must be developed against fake adapters, and must never
+contact X from tests.

@@ -116,6 +116,10 @@ export interface XTweetWithMetrics {
   text: string;
   author_id?: string;
   created_at?: string;
+  referenced_tweets?: Array<{
+    type: 'replied_to' | 'quoted' | 'retweeted';
+    id: string;
+  }>;
   public_metrics?: {
     retweet_count: number;
     reply_count: number;

@@ -11,6 +11,7 @@ import {
   type HumanXInteractionApprovalRequest,
   type HumanXInteractionInput,
   type ScheduleInput,
+  type XInteractionWatchReadAdapter,
   type XDraftInput,
 } from '@x-harness/content-os';
 import {
@@ -36,6 +37,7 @@ import {
   isCubelicPublicationStopped,
   processDueCubelicPublications,
 } from '../cubelic/adapter.js';
+import { processInteractionWatches } from '../cubelic/interaction-watch.js';
 
 const migrationPaths = [
   fileURLToPath(new URL('../../../../packages/db/migrations/008-staff-members.sql', import.meta.url)),
@@ -47,6 +49,7 @@ const migrationPaths = [
   fileURLToPath(new URL('../../../../packages/db/migrations/022-cubelic-operation-window-publication-lock.sql', import.meta.url)),
   fileURLToPath(new URL('../../../../packages/db/migrations/027-cubelic-media-delivery.sql', import.meta.url)),
   fileURLToPath(new URL('../../../../packages/db/migrations/028-cubelic-human-x-interactions.sql', import.meta.url)),
+  fileURLToPath(new URL('../../../../packages/db/migrations/029-x-interaction-watch-queue.sql', import.meta.url)),
 ];
 
 describe('CUBΣLIC Worker API integration', () => {
@@ -58,6 +61,8 @@ describe('CUBΣLIC Worker API integration', () => {
   let publishPost: ReturnType<typeof vi.fn>;
   let schedulePost: ReturnType<typeof vi.fn>;
   let executeInteraction: ReturnType<typeof vi.fn>;
+  let interactionWatchReader: XInteractionWatchReadAdapter;
+  let discoverOriginalPosts: ReturnType<typeof vi.fn>;
   let mediaBucket: R2Bucket;
 
   beforeEach(async () => {
@@ -116,6 +121,14 @@ describe('CUBΣLIC Worker API integration', () => {
       status: 'completed' as const,
       ...(['reply', 'dm_reply'].includes(input.kind) ? { externalId: `external_${input.operationId}` } : {}),
     }));
+    discoverOriginalPosts = vi.fn(async () => []);
+    interactionWatchReader = {
+      verifyTargetUsername: vi.fn(async () => ({
+        targetUserId: '1900000000000000100' as never,
+        verifiedUsername: 'approved_target',
+      })),
+      discoverOriginalPosts,
+    };
     app.use('*', async (c, next) => {
       const requestActor = c.req.header('X-Test-Actor') === 'hermes' ? 'hermes' : 'human';
       if (requestActor === 'human') {
@@ -144,6 +157,7 @@ describe('CUBΣLIC Worker API integration', () => {
         isEmergencyStopped: () => isCubelicPublicationStopped(db),
         write: executeInteraction,
       }));
+      c.set('interactionWatchReadAdapter', interactionWatchReader);
       c.set('cubelicMediaBodyWriter', async (input) => {
         const body = await new Response(input.body).arrayBuffer();
         return input.bucket.put(input.r2Key, body, {
@@ -181,6 +195,133 @@ describe('CUBΣLIC Worker API integration', () => {
       correlationId: `corr_window_${eventId}`,
     });
   }
+
+  it('registers exactly one verified read-only interaction watch behind dedicated gates', async () => {
+    const disabled = await request('/api/cubelic/interaction-watches', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'X-Human-Approval-Key': 'integration-human-key-with-at-least-32-bytes',
+      },
+      body: JSON.stringify({ targetUsername: 'approved_target' }),
+    });
+    expect(disabled.status).toBe(423);
+
+    bindings.X_INTERACTION_WATCH_ENABLED = 'true';
+    bindings.X_INTERACTION_WATCH_RELEASE_APPROVED = 'true';
+    bindings.X_INTERACTION_WATCH_STAGING_SMOKE_VERIFIED = 'true';
+    const create = () => request('/api/cubelic/interaction-watches', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'X-Human-Approval-Key': 'integration-human-key-with-at-least-32-bytes',
+      },
+      body: JSON.stringify({ targetUsername: 'approved_target' }),
+    });
+
+    const created = await create();
+    expect(created.status).toBe(201);
+    await expect(created.json()).resolves.toMatchObject({
+      data: {
+        watchId: expect.stringMatching(/^watch_/),
+        targetUserId: '1900000000000000100',
+        targetUsername: 'approved_target',
+        status: 'active',
+      },
+    });
+    expect((await create()).status).toBe(409);
+    await expect((await request('/api/cubelic/interaction-watches')).json())
+      .resolves.toMatchObject({
+        data: [{
+          targetUserId: '1900000000000000100',
+          targetUsername: 'approved_target',
+        }],
+      });
+  });
+
+  it('queues each newly detected original post once without returning its body', async () => {
+    bindings.X_INTERACTION_WATCH_ENABLED = 'true';
+    bindings.X_INTERACTION_WATCH_RELEASE_APPROVED = 'true';
+    bindings.X_INTERACTION_WATCH_STAGING_SMOKE_VERIFIED = 'true';
+    discoverOriginalPosts.mockResolvedValue([
+      {
+        postId: '1900000000000000201',
+        authorId: '1900000000000000100',
+        createdAt: '2026-07-24T02:00:00.000Z',
+        referencedTypes: [],
+        body: 'must not be returned or persisted',
+      },
+      {
+        postId: '1900000000000000202',
+        authorId: '1900000000000000100',
+        createdAt: '2026-07-24T02:01:00.000Z',
+        referencedTypes: ['replied_to'],
+      },
+      {
+        postId: '1900000000000000203',
+        authorId: '1900000000000000100',
+        createdAt: '2026-07-24T02:02:00.000Z',
+        referencedTypes: ['retweeted'],
+      },
+    ]);
+    const created = await request('/api/cubelic/interaction-watches', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'X-Human-Approval-Key': 'integration-human-key-with-at-least-32-bytes',
+      },
+      body: JSON.stringify({ targetUsername: 'approved_target' }),
+    });
+    const watchId = (await created.json() as { data: { watchId: string } }).data.watchId;
+
+    for (const discovered of [1, 0]) {
+      const poll = await request(`/api/cubelic/interaction-watches/${watchId}/poll`, {
+        method: 'POST',
+        headers: {
+          'X-Human-Approval-Key': 'integration-human-key-with-at-least-32-bytes',
+        },
+      });
+      expect(poll.status).toBe(200);
+      await expect(poll.json()).resolves.toMatchObject({ data: { discovered } });
+    }
+
+    const candidates = await request('/api/cubelic/interaction-candidates');
+    expect(candidates.status).toBe(200);
+    const serialized = JSON.stringify(await candidates.json());
+    expect(serialized).toContain('1900000000000000201');
+    expect(serialized).not.toContain('1900000000000000202');
+    expect(serialized).not.toContain('1900000000000000203');
+    expect(serialized).not.toContain('must not be returned or persisted');
+  });
+
+  it('lets Cron detect candidates through a read-only adapter and nothing else', async () => {
+    bindings.X_INTERACTION_WATCH_ENABLED = 'true';
+    bindings.X_INTERACTION_WATCH_RELEASE_APPROVED = 'true';
+    bindings.X_INTERACTION_WATCH_STAGING_SMOKE_VERIFIED = 'true';
+    discoverOriginalPosts.mockResolvedValue([{
+      postId: '1900000000000000301',
+      authorId: '1900000000000000100',
+      createdAt: '2026-07-24T03:00:00.000Z',
+      referencedTypes: [],
+    }]);
+    await request('/api/cubelic/interaction-watches', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'X-Human-Approval-Key': 'integration-human-key-with-at-least-32-bytes',
+      },
+      body: JSON.stringify({ targetUsername: 'approved_target' }),
+    });
+
+    await expect(processInteractionWatches(bindings, interactionWatchReader))
+      .resolves.toEqual({ discovered: 1, watchesPolled: 1 });
+    await expect(processInteractionWatches(bindings, interactionWatchReader))
+      .resolves.toEqual({ discovered: 0, watchesPolled: 0 });
+    await expect((await request('/api/cubelic/interaction-candidates')).json())
+      .resolves.toMatchObject({
+        data: [{ postId: '1900000000000000301', status: 'pending' }],
+      });
+  });
 
   async function interactionHeaders(
     path: string,

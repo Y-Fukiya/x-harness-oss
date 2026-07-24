@@ -96,6 +96,226 @@ export async function appendCubelicAudit(db: D1Database, input: AuditInput): Pro
   await cubelicAuditStatement(db, input).run();
 }
 
+export interface InteractionWatchRecord {
+  watchId: string;
+  targetUserId: string;
+  targetUsername: string;
+  verifiedAt: string;
+  status: 'active' | 'paused';
+  lastSeenPostId: string | null;
+  lastPolledAt: string | null;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface InteractionWatchRow {
+  watch_id: string;
+  target_user_id: string;
+  target_username: string;
+  verified_at: string;
+  status: InteractionWatchRecord['status'];
+  last_seen_post_id: string | null;
+  last_polled_at: string | null;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+}
+
+function interactionWatchFromRow(row: InteractionWatchRow): InteractionWatchRecord {
+  return {
+    watchId: row.watch_id,
+    targetUserId: row.target_user_id,
+    targetUsername: row.target_username,
+    verifiedAt: row.verified_at,
+    status: row.status,
+    lastSeenPostId: row.last_seen_post_id,
+    lastPolledAt: row.last_polled_at,
+    createdBy: row.created_by,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+export async function createInteractionWatch(
+  db: D1Database,
+  input: {
+    watchId: string;
+    targetUserId: string;
+    targetUsername: string;
+    verifiedAt: string;
+    createdBy: string;
+  },
+  audit: AuditInput,
+): Promise<InteractionWatchRecord> {
+  const timestamp = nowIso();
+  await runCubelicMutation(db, [
+    db.prepare(
+      `INSERT INTO x_interaction_watches (
+        watch_id, singleton_key, target_user_id, target_username, verified_at,
+        status, last_seen_post_id, last_polled_at, created_by, created_at, updated_at
+      ) VALUES (?, 1, ?, ?, ?, 'active', NULL, NULL, ?, ?, ?)`,
+    ).bind(
+      input.watchId,
+      input.targetUserId,
+      input.targetUsername,
+      input.verifiedAt,
+      input.createdBy,
+      timestamp,
+      timestamp,
+    ),
+  ], [audit]);
+  return {
+    watchId: input.watchId,
+    targetUserId: input.targetUserId,
+    targetUsername: input.targetUsername,
+    verifiedAt: input.verifiedAt,
+    status: 'active',
+    lastSeenPostId: null,
+    lastPolledAt: null,
+    createdBy: input.createdBy,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  };
+}
+
+export async function listInteractionWatches(
+  db: D1Database,
+): Promise<InteractionWatchRecord[]> {
+  const rows = await db.prepare(
+    `SELECT watch_id, target_user_id, target_username, verified_at, status,
+      last_seen_post_id, last_polled_at, created_by, created_at, updated_at
+     FROM x_interaction_watches ORDER BY created_at ASC`,
+  ).all<InteractionWatchRow>();
+  return rows.results.map(interactionWatchFromRow);
+}
+
+export async function getInteractionWatch(
+  db: D1Database,
+  watchId: string,
+): Promise<InteractionWatchRecord | null> {
+  const row = await db.prepare(
+    `SELECT watch_id, target_user_id, target_username, verified_at, status,
+      last_seen_post_id, last_polled_at, created_by, created_at, updated_at
+     FROM x_interaction_watches WHERE watch_id = ?`,
+  ).bind(watchId).first<InteractionWatchRow>();
+  return row ? interactionWatchFromRow(row) : null;
+}
+
+export async function updateInteractionWatchCursor(
+  db: D1Database,
+  watchId: string,
+  lastSeenPostId: string,
+  audit: AuditInput,
+): Promise<void> {
+  await runCubelicMutation(db, [
+    db.prepare(
+      `UPDATE x_interaction_watches
+       SET last_seen_post_id = ?, updated_at = ?
+       WHERE watch_id = ?`,
+    ).bind(lastSeenPostId, nowIso(), watchId),
+  ], [audit]);
+}
+
+export async function markInteractionWatchPolled(
+  db: D1Database,
+  watchId: string,
+  polledAt: string,
+  audit: AuditInput,
+): Promise<void> {
+  await runCubelicMutation(db, [
+    db.prepare(
+      `UPDATE x_interaction_watches
+       SET last_polled_at = ?, updated_at = ?
+       WHERE watch_id = ?`,
+    ).bind(polledAt, polledAt, watchId),
+  ], [audit]);
+}
+
+export interface InteractionCandidateRecord {
+  candidateId: string;
+  watchId: string;
+  postId: string;
+  authorId: string;
+  postCreatedAt: string;
+  status: 'pending';
+  detectedAt: string;
+}
+
+interface InteractionCandidateRow {
+  candidate_id: string;
+  watch_id: string;
+  post_id: string;
+  author_id: string;
+  post_created_at: string;
+  status: 'pending';
+  detected_at: string;
+}
+
+function interactionCandidateFromRow(
+  row: InteractionCandidateRow,
+): InteractionCandidateRecord {
+  return {
+    candidateId: row.candidate_id,
+    watchId: row.watch_id,
+    postId: row.post_id,
+    authorId: row.author_id,
+    postCreatedAt: row.post_created_at,
+    status: row.status,
+    detectedAt: row.detected_at,
+  };
+}
+
+export async function createInteractionCandidate(
+  db: D1Database,
+  input: {
+    candidateId: string;
+    watchId: string;
+    postId: string;
+    authorId: string;
+    postCreatedAt: string;
+  },
+  audit: AuditInput,
+): Promise<boolean> {
+  const existing = await db.prepare(
+    'SELECT candidate_id FROM x_interaction_candidates WHERE post_id = ?',
+  ).bind(input.postId).first<{ candidate_id: string }>();
+  if (existing) return false;
+  const timestamp = nowIso();
+  try {
+    await runCubelicMutation(db, [
+      db.prepare(
+        `INSERT INTO x_interaction_candidates (
+          candidate_id, watch_id, post_id, author_id, post_created_at,
+          status, detected_at
+        ) VALUES (?, ?, ?, ?, ?, 'pending', ?)`,
+      ).bind(
+        input.candidateId,
+        input.watchId,
+        input.postId,
+        input.authorId,
+        input.postCreatedAt,
+        timestamp,
+      ),
+    ], [audit]);
+    return true;
+  } catch (error) {
+    if (isUniqueConstraintError(error)) return false;
+    throw error;
+  }
+}
+
+export async function listInteractionCandidates(
+  db: D1Database,
+): Promise<InteractionCandidateRecord[]> {
+  const rows = await db.prepare(
+    `SELECT candidate_id, watch_id, post_id, author_id, post_created_at,
+      status, detected_at
+     FROM x_interaction_candidates ORDER BY detected_at DESC`,
+  ).all<InteractionCandidateRow>();
+  return rows.results.map(interactionCandidateFromRow);
+}
+
 export type CubelicHumanInteractionKind = 'reply' | 'dm_reply' | 'like' | 'follow' | 'unfollow';
 export type CubelicHumanInteractionStatus = 'executing' | 'completed' | 'failed' | 'outcome_unknown';
 

@@ -74,6 +74,39 @@ export function validateWranglerBoundaries(wrangler) {
     if (environment === 'production' && values.CUBELIC_HUMAN_INTERACTIONS_SMOKE_MODE !== 'false') {
       violations.push(`${prefix} production must disable named-human interaction smoke mode`);
     }
+    const hasInteractionWatchConfig = [
+      'X_INTERACTION_WATCH_ENABLED',
+      'X_INTERACTION_WATCH_SMOKE_MODE',
+      'X_INTERACTION_WATCH_RELEASE_APPROVED',
+      'X_INTERACTION_WATCH_STAGING_SMOKE_VERIFIED',
+    ].some((key) => Object.hasOwn(values, key));
+    if (hasInteractionWatchConfig) {
+      if (values.X_INTERACTION_WATCH_ENABLED === 'true') {
+        const stagingWatchSmoke = environment === 'staging'
+          && values.X_INTERACTION_WATCH_SMOKE_MODE === 'true';
+        const verifiedWatchRelease = values.X_INTERACTION_WATCH_RELEASE_APPROVED === 'true'
+          && values.X_INTERACTION_WATCH_STAGING_SMOKE_VERIFIED === 'true';
+        if (!stagingWatchSmoke && !verifiedWatchRelease) {
+          violations.push(`${prefix} interaction watches require release approval and verified staging smoke`);
+        }
+        if (values.GLOBAL_PUBLISHING_DISABLED !== 'false') {
+          violations.push(`${prefix} interaction watches require GLOBAL_PUBLISHING_DISABLED=false`);
+        }
+      } else if (
+        values.X_INTERACTION_WATCH_ENABLED !== 'false'
+        || values.X_INTERACTION_WATCH_SMOKE_MODE !== 'false'
+        || values.X_INTERACTION_WATCH_RELEASE_APPROVED !== 'false'
+        || values.X_INTERACTION_WATCH_STAGING_SMOKE_VERIFIED !== 'false'
+      ) {
+        violations.push(`${prefix} disabled interaction watches must keep all watch gates false`);
+      }
+      if (
+        environment === 'production'
+        && values.X_INTERACTION_WATCH_SMOKE_MODE !== 'false'
+      ) {
+        violations.push(`${prefix} production must disable interaction watch smoke mode`);
+      }
+    }
     if (values.CUBELIC_PHASE3_ENABLED === 'true') {
       if (values.GLOBAL_PUBLISHING_DISABLED !== 'false') {
         violations.push(`${prefix} Phase 3 requires GLOBAL_PUBLISHING_DISABLED=false`);

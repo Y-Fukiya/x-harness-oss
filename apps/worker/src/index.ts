@@ -31,8 +31,10 @@ import type {
   CubelicPhase3AdapterFactory,
   CubelicXAdapterFactory,
 } from './cubelic/adapter.js';
+import type { XInteractionWatchReadAdapter } from '@x-harness/content-os';
 import type { MediaBodyWriter } from './cubelic/media-delivery.js';
 import { processDueCubelicPublications } from './cubelic/adapter.js';
+import { processInteractionWatches } from './cubelic/interaction-watch.js';
 import { lineConnections } from './routes/line-connections.js';
 import { verifyOrInitializeCredentialKeyState } from '@x-harness/db';
 
@@ -73,6 +75,10 @@ export type Env = {
     MEDIA_RETENTION_POLICY_VERIFIED?: string;
     HUMAN_INTERACTIONS_RELEASE_APPROVED?: string;
     STAGING_HUMAN_INTERACTIONS_SMOKE_VERIFIED?: string;
+    X_INTERACTION_WATCH_ENABLED?: string;
+    X_INTERACTION_WATCH_SMOKE_MODE?: string;
+    X_INTERACTION_WATCH_RELEASE_APPROVED?: string;
+    X_INTERACTION_WATCH_STAGING_SMOKE_VERIFIED?: string;
     GLOBAL_PUBLISHING_DISABLED?: string;
     HUMAN_APPROVAL_KEY?: string;
     HERMES_ACCESS_TOKEN?: string;
@@ -88,6 +94,7 @@ export type Env = {
     cubelicPhase3AdapterFactory?: CubelicPhase3AdapterFactory;
     cubelicHumanInteractionAdapterFactory?: CubelicHumanInteractionAdapterFactory;
     cubelicMediaBodyWriter?: MediaBodyWriter;
+    interactionWatchReadAdapter?: XInteractionWatchReadAdapter;
     correlationId?: string;
   };
 };
@@ -166,6 +173,7 @@ async function scheduled(
     env.CREDENTIAL_ENCRYPTION_KEY_VERSION,
   );
   await processDueCubelicPublications(env);
+  await processInteractionWatches(env);
 }
 
 export default {

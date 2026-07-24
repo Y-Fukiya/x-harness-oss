@@ -6,6 +6,9 @@ import {
   evaluateRights,
   type ContentCategory,
   type HumanXInteractionInput,
+  type XInteractionWatchReadAdapter,
+  type XPostId,
+  type XUserId,
 } from '@x-harness/content-os';
 import {
   completeCubelicPublicationJob,
@@ -80,6 +83,103 @@ function buildXClient(account: {
         accessTokenSecret: account.access_token_secret,
       })
     : new XClient(account.access_token);
+}
+
+async function configuredXClient(env: Env['Bindings']): Promise<{
+  account: NonNullable<Awaited<ReturnType<typeof getXAccountById>>>;
+  client: XClient;
+}> {
+  const accountId = env.X_HARNESS_ACCOUNT_ID;
+  if (!accountId || accountId === 'SET_AFTER_ACCOUNT_SETUP') {
+    throw new PublicationPolicyError(
+      'x_harness_account_not_configured',
+      'X Harness account mapping is not configured',
+    );
+  }
+  const account = await getXAccountById(
+    env.DB,
+    accountId,
+    env.CREDENTIAL_ENCRYPTION_KEY,
+  );
+  if (!account) {
+    throw new PublicationPolicyError(
+      'x_account_not_found',
+      'Configured X account was not found',
+    );
+  }
+  return { account, client: buildXClient(account) };
+}
+
+export function buildInteractionWatchReadAdapter(
+  env: Env['Bindings'],
+): XInteractionWatchReadAdapter {
+  if (
+    env.ENVIRONMENT === 'staging'
+    && env.X_INTERACTION_WATCH_SMOKE_MODE === 'true'
+  ) {
+    return {
+      async verifyTargetUsername(username) {
+        if (username !== 'x_harness_watch_smoke') {
+          throw new PublicationPolicyError(
+            'interaction_watch_smoke_target_invalid',
+            'Staging watch smoke accepts only its synthetic target',
+          );
+        }
+        return {
+          targetUserId: '9900000000000000100' as XUserId,
+          verifiedUsername: username,
+        };
+      },
+      async discoverOriginalPosts() {
+        return [{
+          postId: '9900000000000000101' as XPostId,
+          authorId: '9900000000000000100' as XUserId,
+          createdAt: '2026-07-24T00:00:00.000Z',
+          referencedTypes: [],
+        }];
+      },
+    };
+  }
+  return {
+    async verifyTargetUsername(username) {
+      const { account, client } = await configuredXClient(env);
+      const user = await client.getUserByUsername(username);
+      await incrementApiUsage(env.DB, account.id, 'get_user_by_username');
+      if (user.username.toLowerCase() !== username.toLowerCase()) {
+        throw new PublicationPolicyError(
+          'interaction_watch_identity_mismatch',
+          'X returned a different username than the requested watch target',
+        );
+      }
+      return {
+        targetUserId: user.id as XUserId,
+        verifiedUsername: user.username,
+      };
+    },
+    async discoverOriginalPosts({ registration, sincePostId }) {
+      const { account, client } = await configuredXClient(env);
+      const response = await client.getUserTweets(
+        registration.targetUserId,
+        10,
+        undefined,
+        sincePostId ?? undefined,
+      );
+      await incrementApiUsage(env.DB, account.id, 'get_user_tweets');
+      return (response.data ?? [])
+        .filter((post) => post.author_id === registration.targetUserId)
+        .filter((post) => Boolean(post.created_at))
+        .map((post) => ({
+          postId: post.id as XPostId,
+          authorId: post.author_id as XUserId,
+          createdAt: post.created_at!,
+          referencedTypes: (post.referenced_tweets ?? [])
+            .map((reference) => reference.type)
+            .filter((type): type is 'replied_to' | 'quoted' | 'retweeted' => (
+              type === 'replied_to' || type === 'quoted' || type === 'retweeted'
+            )),
+        }));
+    },
+  };
 }
 
 export const buildCubelicHumanInteractionAdapter: CubelicHumanInteractionAdapterFactory = (env, operatorId) => {

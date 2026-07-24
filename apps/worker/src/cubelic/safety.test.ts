@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   isCubelicSafeMode,
+  isInteractionWatchEnabled,
   isNamedHumanInteractionEnabled,
   isPhase1RouteBlocked,
   isPhase3PublicationEnabled,
@@ -118,6 +119,27 @@ describe('CUBΣLIC centralized Phase 1 route boundary', () => {
       CUBELIC_HUMAN_INTERACTIONS_SMOKE_MODE: 'false',
       HUMAN_INTERACTIONS_RELEASE_APPROVED: 'true',
       STAGING_HUMAN_INTERACTIONS_SMOKE_VERIFIED: 'true',
+    }))).toBe(true);
+  });
+
+  it('keeps read-only watches behind dedicated staging or release gates', () => {
+    expect(isInteractionWatchEnabled(env({
+      X_INTERACTION_WATCH_ENABLED: 'true',
+    }))).toBe(false);
+    expect(isInteractionWatchEnabled(env({
+      ENVIRONMENT: 'staging',
+      X_INTERACTION_WATCH_ENABLED: 'true',
+      X_INTERACTION_WATCH_SMOKE_MODE: 'true',
+    }))).toBe(true);
+    expect(isInteractionWatchEnabled(env({
+      ENVIRONMENT: 'production',
+      X_INTERACTION_WATCH_ENABLED: 'true',
+      X_INTERACTION_WATCH_SMOKE_MODE: 'true',
+    }))).toBe(false);
+    expect(isInteractionWatchEnabled(env({
+      X_INTERACTION_WATCH_ENABLED: 'true',
+      X_INTERACTION_WATCH_RELEASE_APPROVED: 'true',
+      X_INTERACTION_WATCH_STAGING_SMOKE_VERIFIED: 'true',
     }))).toBe(true);
   });
 });

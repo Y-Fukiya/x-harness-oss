@@ -22,7 +22,13 @@ This repository is an X Harness OSS fork with a fail-closed CUBΣLIC Phase 1 lay
 
 ## Scope
 
-Phase 1 is the active milestone. Phase 2/3 behavior may be represented by interfaces or documentation only and must remain disabled.
+Phase 1 remains active together with one explicitly approved, default-disabled
+read-only interaction-watch milestone. That milestone may verify one X username,
+poll original posts through `XInteractionWatchReadAdapter`, persist ID/timestamp
+candidate metadata, and display links for human review. It must never Like,
+Repost, reply, DM, follow, approve, or otherwise write to X. All other Phase 2/3
+behavior may be represented by interfaces or documentation only and must remain
+disabled unless separately approved.
 
 ## Verification
 

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import Header from '@/components/layout/header'
 import ReconciliationPanel from '@/components/cubelic/reconciliation-panel'
+import InteractionWatchPanel from '@/components/cubelic/interaction-watch-panel'
 import {
   cubelicApi,
   type CubelicDraft,
@@ -282,6 +283,10 @@ export default function CubelicApprovalPage() {
       <ReconciliationPanel
         humanKey={humanKey}
         enabled={status?.phase3Enabled === true && status?.emergencyStop === true && status?.emergencyStopValid === true}
+      />
+      <InteractionWatchPanel
+        humanKey={humanKey}
+        enabled={status?.interactionWatchEnabled === true}
       />
       <ManualDraftForm humanKey={humanKey} enabled={status?.phase3Enabled === true && status?.emergencyStop === false} refresh={refresh} />
       {loading ? <p className="text-sm text-gray-500">読み込み中…</p> : drafts.length === 0 ? <p className="rounded-xl border border-dashed border-gray-300 p-8 text-center text-sm text-gray-500">下書きはまだありません。</p> : (

@@ -35,7 +35,8 @@
    `023-staff-key-hashes.sql`, then `024-line-connections.sql`, then
    `025-credential-key-state.sql`, then `026-external-mutation-idempotency.sql`,
    then `027-cubelic-media-delivery.sql`, then
-   `028-cubelic-human-x-interactions.sql`
+   `028-cubelic-human-x-interactions.sql`, then
+   `029-x-interaction-watch-queue.sql`
    to staging D1, then run
    `STAGING_WORKER_URL=... STAGING_API_KEY=... pnpm smoke:staging` from an
    approved secret-bearing shell. Smoke must observe
@@ -126,3 +127,23 @@ Phase 3 is default-disabled. Do not combine its first enablement with unrelated 
     approval for production: enable one-by-one interactions only for a concrete
     target with a named operator, a fresh operation-bound proof, and same-window
     verification of the required X User Context scope.
+
+## Read-only interaction-watch release
+
+This capability is default-disabled and must not be enabled together with an X
+write release.
+
+1. Apply `029-x-interaction-watch-queue.sql` to staging D1.
+2. Keep `X_INTERACTION_WATCH_ENABLED=false`,
+   `X_INTERACTION_WATCH_SMOKE_MODE=false`,
+   `X_INTERACTION_WATCH_RELEASE_APPROVED=false`, and
+   `X_INTERACTION_WATCH_STAGING_SMOKE_VERIFIED=false` in committed configuration.
+3. For the dedicated staging smoke only, enable the watch flag and staging smoke
+   mode, resume the D1 stop with a named operator, register one synthetic target,
+   poll twice, and verify exactly one ID-only candidate. Verify replies and
+   Reposts are excluded and no post body or X-write audit exists.
+4. Restore the D1 stop and disable smoke mode before recording
+   `X_INTERACTION_WATCH_STAGING_SMOKE_VERIFIED=true`.
+5. Production requires a separate `X_INTERACTION_WATCH_RELEASE_APPROVED=true`,
+   the recorded staging evidence, migration 029, and a named operator. Production
+   must keep smoke mode false.

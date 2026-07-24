@@ -33,6 +33,7 @@ import {
   createCubelicMedia,
   createCubelicManualAuthority,
   createCubelicPublishedPostMapping,
+  createInteractionWatch,
   completeCubelicHumanInteraction,
   createCubelicSetlist,
   expireCubelicOperationWindowAndStop,
@@ -44,6 +45,7 @@ import {
   getCubelicEmergencyStopState,
   getCubelicEvent,
   getCubelicInertDraft,
+  getInteractionWatch,
   getCubelicMedia,
   getCubelicMediaObject,
   getCubelicManualAuthority,
@@ -60,6 +62,8 @@ import {
   listCubelicContent,
   listCubelicDrafts,
   listCubelicEvents,
+  listInteractionCandidates,
+  listInteractionWatches,
   normalizeCubelicIso8601Timestamp,
   markCubelicHumanInteractionOutcomeUnknown,
   saveCubelicMetrics,
@@ -86,9 +90,12 @@ import {
   buildCubelicHumanInteractionAdapter,
   buildCubelicPhase3XAdapter,
   buildCubelicXAdapter,
+  buildInteractionWatchReadAdapter,
 } from '../cubelic/adapter.js';
 import { MEDIA_SIZE_LIMITS, writeMediaBodyToR2 } from '../cubelic/media-delivery.js';
+import { pollInteractionWatch } from '../cubelic/interaction-watch.js';
 import {
+  isInteractionWatchEnabled,
   isNamedHumanInteractionEnabled,
   isPhase3MediaDeliveryEnabled,
   isPhase3PublicationEnabled,
@@ -246,6 +253,7 @@ async function apiError(c: Context<Env>, error: unknown): Promise<Response> {
     const stopped = [
       'phase3_operation_disabled',
       'human_interactions_disabled',
+      'interaction_watches_disabled',
       'emergency_stop_active',
     ].includes(error.code);
     const forbidden = [
@@ -354,6 +362,11 @@ function isHumanInteractionWrite(path: string): boolean {
   return /^\/api\/cubelic\/interactions\/(?:reply|dm-reply|like|follow|unfollow)$/.test(path);
 }
 
+function isInteractionWatchWrite(path: string): boolean {
+  return path === '/api/cubelic/interaction-watches'
+    || /^\/api\/cubelic\/interaction-watches\/[^/]+\/poll$/.test(path);
+}
+
 const OPERATION_WINDOW_UNSCOPED_WRITES = new Set([
   '/api/cubelic/masters/songs/ingest',
   '/api/cubelic/masters/members/ingest',
@@ -460,6 +473,7 @@ cubelic.use('/api/cubelic/*', async (c, next) => {
   if (
     (isPhase3PublicationEnabled(c.env) && isPhase3OperationalWrite(path))
     || (isNamedHumanInteractionEnabled(c.env) && isHumanInteractionWrite(path))
+    || (isInteractionWatchEnabled(c.env) && isInteractionWatchWrite(path))
   ) return next();
   const operationWindow = await getCubelicOperationWindow(c.env.DB);
   if (operationWindow && !operationWindow.active) {
@@ -835,6 +849,123 @@ for (const kind of ['follow', 'unfollow'] as const) {
     } catch (error) { return apiError(c, error); }
   });
 }
+
+cubelic.get('/api/cubelic/interaction-watches', async (c) => {
+  if (!isInteractionWatchEnabled(c.env)) {
+    return c.json({
+      success: false,
+      error: 'Interaction watches are disabled',
+      code: 'interaction_watches_disabled',
+    }, 423);
+  }
+  return c.json({
+    success: true,
+    data: await listInteractionWatches(c.env.DB),
+  });
+});
+
+cubelic.post('/api/cubelic/interaction-watches', async (c) => {
+  try {
+    if (!isInteractionWatchEnabled(c.env)) {
+      throw new PublicationPolicyError(
+        'interaction_watches_disabled',
+        'Interaction watches are disabled',
+      );
+    }
+    const denied = await requireNamedHumanApproval(c);
+    if (denied) return denied;
+    const body = await c.req.json<Record<string, unknown>>();
+    assertExactInteractionKeys(body, ['targetUsername']);
+    if (
+      typeof body.targetUsername !== 'string'
+      || !/^[A-Za-z0-9_]{1,15}$/.test(body.targetUsername)
+    ) {
+      throw new PublicationPolicyError(
+        'interaction_request_invalid',
+        'targetUsername must be one exact X username',
+      );
+    }
+    const reader = c.get('interactionWatchReadAdapter')
+      ?? buildInteractionWatchReadAdapter(c.env);
+    const verified = await reader.verifyTargetUsername(body.targetUsername);
+    const watchId = `watch_${crypto.randomUUID()}`;
+    const verifiedAt = new Date().toISOString();
+    const watch = await createInteractionWatch(c.env.DB, {
+      watchId,
+      targetUserId: verified.targetUserId,
+      targetUsername: verified.verifiedUsername,
+      verifiedAt,
+      createdBy: namedHumanId(c),
+    }, {
+      actor: 'human',
+      action: 'interaction_watch.created',
+      entityType: 'interaction_watch',
+      entityId: watchId,
+      before: {},
+      after: {
+        status: 'active',
+        targetIdentityVerified: true,
+      },
+      correlationId: correlationId(c),
+    });
+    return c.json({ success: true, data: watch }, 201);
+  } catch (error) {
+    return apiError(c, error);
+  }
+});
+
+cubelic.post('/api/cubelic/interaction-watches/:id/poll', async (c) => {
+  try {
+    if (!isInteractionWatchEnabled(c.env)) {
+      throw new PublicationPolicyError(
+        'interaction_watches_disabled',
+        'Interaction watches are disabled',
+      );
+    }
+    const denied = await requireNamedHumanApproval(c);
+    if (denied) return denied;
+    const watchId = c.req.param('id');
+    if (!/^watch_[0-9a-f-]{36}$/.test(watchId)) {
+      throw new PublicationPolicyError(
+        'interaction_request_invalid',
+        'A valid interaction watch id is required',
+      );
+    }
+    const watch = await getInteractionWatch(c.env.DB, watchId);
+    if (!watch || watch.status !== 'active') {
+      return c.json({
+        success: false,
+        error: 'Active interaction watch not found',
+        code: 'interaction_watch_not_found',
+      }, 404);
+    }
+    const reader = c.get('interactionWatchReadAdapter')
+      ?? buildInteractionWatchReadAdapter(c.env);
+    const result = await pollInteractionWatch(
+      c.env,
+      watch,
+      reader,
+      correlationId(c),
+    );
+    return c.json({ success: true, data: result });
+  } catch (error) {
+    return apiError(c, error);
+  }
+});
+
+cubelic.get('/api/cubelic/interaction-candidates', async (c) => {
+  if (!isInteractionWatchEnabled(c.env)) {
+    return c.json({
+      success: false,
+      error: 'Interaction watches are disabled',
+      code: 'interaction_watches_disabled',
+    }, 423);
+  }
+  return c.json({
+    success: true,
+    data: await listInteractionCandidates(c.env.DB),
+  });
+});
 
 cubelic.post('/api/cubelic/events', async (c) => {
   try {
@@ -1792,6 +1923,9 @@ cubelic.get('/api/cubelic/admin/status', async (c) => {
         && !stopState.stopped,
       namedHumanInteractionSmokeMode: c.env.ENVIRONMENT === 'staging'
         && c.env.CUBELIC_HUMAN_INTERACTIONS_SMOKE_MODE === 'true',
+      interactionWatchEnabled: isInteractionWatchEnabled(c.env)
+        && c.env.GLOBAL_PUBLISHING_DISABLED === 'false'
+        && !stopState.stopped,
     },
   });
 });

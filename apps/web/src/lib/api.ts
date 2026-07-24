@@ -483,6 +483,28 @@ export interface CubelicSystemStatus {
   operationWindow: { eventId: string; expiresAt: string; active: boolean } | null;
   publishingEnabled: boolean;
   schedulingEnabled: boolean;
+  interactionWatchEnabled: boolean;
+}
+
+export interface InteractionWatch {
+  watchId: string;
+  targetUserId: string;
+  targetUsername: string;
+  verifiedAt: string;
+  status: 'active' | 'paused';
+  lastSeenPostId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface InteractionCandidate {
+  candidateId: string;
+  watchId: string;
+  postId: string;
+  authorId: string;
+  postCreatedAt: string;
+  status: 'pending';
+  detectedAt: string;
 }
 
 export type CubelicPublicationReconciliationInput =
@@ -516,6 +538,29 @@ export type CubelicPublicationReconciliationResult =
   };
 
 export const cubelicApi = {
+  interactionWatch: {
+    list: () => fetchApi<ApiResponse<InteractionWatch[]>>(
+      '/api/cubelic/interaction-watches',
+    ),
+    create: (targetUsername: string, humanApprovalKey: string) =>
+      fetchApi<ApiResponse<InteractionWatch>>('/api/cubelic/interaction-watches', {
+        method: 'POST',
+        headers: { 'X-Human-Approval-Key': humanApprovalKey },
+        body: JSON.stringify({ targetUsername }),
+      }),
+    poll: (watchId: string, humanApprovalKey: string) =>
+      fetchApi<ApiResponse<{ discovered: number }>>(
+        `/api/cubelic/interaction-watches/${encodeURIComponent(watchId)}/poll`,
+        {
+          method: 'POST',
+          headers: { 'X-Human-Approval-Key': humanApprovalKey },
+          body: '{}',
+        },
+      ),
+    candidates: () => fetchApi<ApiResponse<InteractionCandidate[]>>(
+      '/api/cubelic/interaction-candidates',
+    ),
+  },
   manualDrafts: {
     create: (
       input: {

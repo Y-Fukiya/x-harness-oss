@@ -73,13 +73,19 @@ export class XClient {
     return this.get<XApiResponse<XTweetSearchResult[]>>(`/tweets/${tweetId}/quote_tweets?${params}`);
   }
 
-  async getUserTweets(userId: string, maxResults = 100, paginationToken?: string): Promise<XApiResponse<XTweetWithMetrics[]>> {
+  async getUserTweets(
+    userId: string,
+    maxResults = 100,
+    paginationToken?: string,
+    sinceId?: string,
+  ): Promise<XApiResponse<XTweetWithMetrics[]>> {
     const params = new URLSearchParams({
       'tweet.fields': 'author_id,created_at,public_metrics,referenced_tweets',
       expansions: 'referenced_tweets.id',
       max_results: String(maxResults),
     });
     if (paginationToken) params.set('pagination_token', paginationToken);
+    if (sinceId) params.set('since_id', sinceId);
     return this.get<XApiResponse<XTweetWithMetrics[]>>(`/users/${userId}/tweets?${params}`);
   }
 

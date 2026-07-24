@@ -68,6 +68,22 @@ CUBELIC_PHASE3_SCHEDULE_POLICIES = "event_notice:event_notice_manual_v1"
     ]);
   });
 
+  it('rejects interaction watches without their dedicated smoke or release gates', () => {
+    const violations = validateWranglerBoundaries(`
+[env.production.vars]
+CUBELIC_SAFE_MODE = "true"
+X_INTERACTION_WATCH_ENABLED = "true"
+X_INTERACTION_WATCH_SMOKE_MODE = "false"
+X_INTERACTION_WATCH_RELEASE_APPROVED = "false"
+X_INTERACTION_WATCH_STAGING_SMOKE_VERIFIED = "false"
+GLOBAL_PUBLISHING_DISABLED = "false"
+`);
+
+    expect(violations).toContain(
+      'apps/worker/wrangler.toml: env.production interaction watches require release approval and verified staging smoke',
+    );
+  });
+
   it('rejects media delivery without Phase 3 and a dedicated R2 binding', () => {
     const violations = validateWranglerBoundaries(`
 [env.production]

@@ -27,6 +27,7 @@
     "preflight:production": "node scripts/preflight-production.mjs",
     "smoke:staging": "node scripts/smoke-staging.mjs",
     "smoke:staging:interactions": "node scripts/smoke-staging-interactions-keychain.mjs",
+    "smoke:staging:interaction-watch": "node scripts/smoke-staging-interaction-watch-keychain.mjs",
     "smoke:staging:media": "node scripts/smoke-staging-media-keychain.mjs",
     "validate:production-inputs": "pnpm --filter @x-harness/schemas validate:inputs",
     "operate:production:check": "node scripts/production-first-run-keychain.mjs",

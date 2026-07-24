@@ -64,6 +64,15 @@ export function isNamedHumanInteractionEnabled(env: Env['Bindings']): boolean {
     && (stagingSmokeMode || verifiedRelease);
 }
 
+export function isInteractionWatchEnabled(env: Env['Bindings']): boolean {
+  const stagingSmokeMode = env.ENVIRONMENT === 'staging'
+    && env.X_INTERACTION_WATCH_SMOKE_MODE === 'true';
+  const verifiedRelease = env.X_INTERACTION_WATCH_RELEASE_APPROVED === 'true'
+    && env.X_INTERACTION_WATCH_STAGING_SMOKE_VERIFIED === 'true';
+  return env.X_INTERACTION_WATCH_ENABLED === 'true'
+    && (stagingSmokeMode || verifiedRelease);
+}
+
 export function isPhase1RouteBlocked(method: string, path: string, env: Env['Bindings']): boolean {
   void env;
   if (method === 'OPTIONS') return false;

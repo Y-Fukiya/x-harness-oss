@@ -460,6 +460,13 @@ export interface InteractionWatchCandidate {
   createdAt: string;
 }
 
+export interface InteractionWatchDetectedPost {
+  postId: XPostId;
+  authorId: XUserId;
+  createdAt: string;
+  referencedTypes: readonly ('replied_to' | 'quoted' | 'retweeted')[];
+}
+
 export interface InteractionWatchHumanAuthorization {
   kind: 'human_individual';
   approvalId: XApprovalId;
@@ -493,9 +500,12 @@ export type ApprovedLikeAndRepostResult =
  * and therefore cannot publish, approve, Like, or Repost.
  */
 export interface XInteractionWatchReadAdapter {
+  verifyTargetUsername(
+    username: string,
+  ): Promise<Pick<InteractionWatchRegistration, 'targetUserId' | 'verifiedUsername'>>;
   discoverOriginalPosts(
     input: InteractionWatchDiscoveryInput,
-  ): Promise<readonly InteractionWatchCandidate[]>;
+  ): Promise<readonly InteractionWatchDetectedPost[]>;
 }
 
 /**
