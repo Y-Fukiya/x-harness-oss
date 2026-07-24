@@ -44,3 +44,24 @@ Production activation remains separate. It requires a real target-bound privacy
 review, a dedicated application-only read credential, an explicit release
 approval, and the production migration and deployment while every X-write
 release remains disabled.
+
+## Production preparation
+
+- Production pre-migration backup:
+  `/private/tmp/x-harness-production-before-029-20260724.sql`
+- Production backup SHA-256:
+  `c2163c4172177e5181953c179eadc9da03ea009bc3c22db94690688dc30c76ec`
+- Production backup mode: `0600`
+- Migration 029 applied successfully
+- Production Worker version:
+  `5be0bd28-05a0-4e1f-b08e-218609909453`
+- Production watch and candidate tables are empty
+- Production D1 emergency stop is exact `true`
+- Publishing, scheduling, and the operation window are closed
+- Every interaction-watch release flag remains `false`
+- `X_INTERACTION_WATCH_BEARER_TOKEN` is not provisioned
+
+The remaining activation inputs are the exact target username, its numeric X
+user ID bound to an approved privacy-review reference, and a dedicated
+application-only Bearer Token. These inputs must be supplied through the
+approved secret/configuration channels before a separate production activation.
