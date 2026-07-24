@@ -41,20 +41,16 @@ incomplete or mixed X-write configuration cannot resume this mode.
 ## Verification
 
 - Full `pnpm check`: passed
-- Standard tests: 288 passed
+- Standard tests: 291 passed
 - D1 integration tests: 49 passed
-- Dedicated activation-script test: passed
+- Dedicated activation-script tests: three passed
 - Keychain-backed production preflight: passed
-- Deployed code version:
-  `fc116d35-9420-45ed-9f6d-687b19d06315`
-- Latest secret-change version:
-  `7b8813a8-8f8a-4c81-aabd-10434c605171`
+- Production Worker deployment: completed
 - Production active-watch count: one
 - Production pending-candidate count after initial poll: nine
 - A second Cron poll completed after the 15-minute interval with no failure
 - X-write audit count since watch registration: zero
-- Operator Pages deployment:
-  `https://67e9a635.cubelic-ops-production.pages.dev`
+- Operator Pages deployment: completed
 - Both the custom operator origin and the direct deployment returned the
   Cloudflare Access unauthenticated redirect
 
