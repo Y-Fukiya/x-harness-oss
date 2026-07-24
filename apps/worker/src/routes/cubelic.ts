@@ -2273,13 +2273,27 @@ cubelic.post('/api/cubelic/admin/emergency-resume', async (c) => {
     return c.json({ success: true, data: { stopped: false, normalOperation: true } });
   }
   if (isInteractionWatchEnabled(c.env)) {
-    const wasStopped = await getCubelicEmergencyStop(c.env.DB);
+    const stopState = await getCubelicEmergencyStopState(c.env.DB);
+    if (!stopState.valid) {
+      return c.json({
+        success: false,
+        error: 'A valid D1 emergency-stop state is required before watch resume',
+        code: 'emergency_stop_state_invalid',
+      }, 423);
+    }
+    if (!stopState.stopped) {
+      return c.json({
+        success: false,
+        error: 'The read-only interaction watch is already resumed',
+        code: 'interaction_watch_already_resumed',
+      }, 409);
+    }
     await setCubelicEmergencyStop(c.env.DB, false, actorName(c), {
       actor: 'human',
       action: 'system.interaction_watch_resumed',
       entityType: 'system',
       entityId: 'interaction_watch',
-      before: { stopped: wasStopped },
+      before: { stopped: true },
       after: { stopped: false, interactionWatch: true },
       correlationId: correlationId(c),
     });

@@ -266,6 +266,20 @@ describe('CUBΣLIC Worker API integration', () => {
     bindings.X_INTERACTION_WATCH_ENABLED = 'true';
     bindings.X_INTERACTION_WATCH_RELEASE_APPROVED = 'true';
     bindings.X_INTERACTION_WATCH_STAGING_SMOKE_VERIFIED = 'true';
+    await db.prepare(
+      "DELETE FROM cubelic_system_flags WHERE key = 'emergency_stop'",
+    ).run();
+    const invalidStop = await request('/api/cubelic/admin/emergency-resume', {
+      method: 'POST',
+      headers: {
+        'X-Human-Approval-Key': 'integration-human-key-with-at-least-32-bytes',
+      },
+      body: '{}',
+    });
+    expect(invalidStop.status).toBe(423);
+    await expect(invalidStop.json()).resolves.toMatchObject({
+      code: 'emergency_stop_state_invalid',
+    });
     await setCubelicEmergencyStop(db, true, 'integration-operator', {
       actor: 'human',
       action: 'system.emergency_stop',

@@ -1,7 +1,10 @@
 import { execFileSync, spawnSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const targetUsername = process.env.INTERACTION_WATCH_TARGET_USERNAME;
+const targetUsername = process.env.INTERACTION_WATCH_APPROVED_TARGET_USERNAME;
+const privacyReviewId = process.env.INTERACTION_WATCH_PRIVACY_REVIEW_ID;
 const wranglerScript = process.env.WRANGLER_SCRIPT;
 const workerDirectory = process.env.WORKER_DIRECTORY;
 const bearerService = process.env.INTERACTION_WATCH_BEARER_KEYCHAIN_SERVICE
@@ -14,10 +17,30 @@ const consumerSecretService = process.env.X_CONSUMER_SECRET_KEYCHAIN_SERVICE
   ?? 'CUBELIC Production X Consumer Secret';
 
 if (!targetUsername || !/^[A-Za-z0-9_]{1,15}$/u.test(targetUsername)) {
-  throw new Error('Set INTERACTION_WATCH_TARGET_USERNAME to one valid X username.');
+  throw new Error(
+    'Set INTERACTION_WATCH_APPROVED_TARGET_USERNAME from the approved privacy review.',
+  );
+}
+if (
+  !privacyReviewId
+  || !/^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/u.test(privacyReviewId)
+) {
+  throw new Error('Set the audited INTERACTION_WATCH_PRIVACY_REVIEW_ID.');
 }
 if (!wranglerScript || !workerDirectory) {
   throw new Error('Set WRANGLER_SCRIPT and WORKER_DIRECTORY.');
+}
+const wrangler = readFileSync(join(workerDirectory, 'wrangler.toml'), 'utf8');
+const productionVars = wrangler.match(
+  /\[env\.production\.vars\]([\s\S]*?)(?=\n\[|$)/u,
+)?.[1] ?? '';
+const configuredPrivacyReviewId = productionVars.match(
+  /^X_INTERACTION_WATCH_PRIVACY_REVIEW_ID\s*=\s*"([^"]*)"$/mu,
+)?.[1];
+if (configuredPrivacyReviewId !== privacyReviewId) {
+  throw new Error(
+    'The approved privacy review does not match the production release config.',
+  );
 }
 
 function keychainSecret(service) {
@@ -158,5 +181,6 @@ console.log(JSON.stringify({
   keychainStored: true,
   workerSecretProvisioned: true,
   reviewedTargetBindingProvisioned: true,
+  privacyReviewBound: true,
   targetUsername: userBody.data.username,
 }));

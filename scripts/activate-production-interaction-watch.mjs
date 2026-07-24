@@ -73,8 +73,9 @@ export async function runProductionInteractionWatchActivation({
     throw new Error('The existing production watch does not match the reviewed target.');
   }
 
-  let resumed = false;
+  let resumeAttempted = false;
   try {
+    resumeAttempted = true;
     const resume = await mutation('/api/cubelic/admin/emergency-resume');
     if (
       !resume.response.ok
@@ -83,8 +84,6 @@ export async function runProductionInteractionWatchActivation({
     ) {
       throw new Error(`Read-only watch resume failed with HTTP ${resume.response.status}.`);
     }
-    resumed = true;
-
     let watch = existing.body.data[0];
     if (!watch) {
       const created = await mutation('/api/cubelic/interaction-watches', {
@@ -130,8 +129,23 @@ export async function runProductionInteractionWatchActivation({
       targetUsername,
     };
   } catch (error) {
-    if (resumed) {
-      await mutation('/api/cubelic/admin/emergency-stop').catch(() => null);
+    if (resumeAttempted) {
+      const rollback = await mutation('/api/cubelic/admin/emergency-stop')
+        .catch(() => null);
+      const rollbackStatus = await request('/api/cubelic/admin/status')
+        .catch(() => null);
+      if (
+        !rollback?.response.ok
+        || rollback.body?.data?.stopped !== true
+        || !rollbackStatus?.response.ok
+        || rollbackStatus.body?.data?.emergencyStop !== true
+        || rollbackStatus.body?.data?.emergencyStopValid !== true
+      ) {
+        throw new Error(
+          'Activation failed and emergency-stop rollback could not be verified.',
+          { cause: error },
+        );
+      }
     }
     throw error;
   }

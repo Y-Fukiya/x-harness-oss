@@ -24,6 +24,20 @@ not persisted.
 The read-only resume route first proves the complete watch configuration. An
 incomplete or mixed X-write configuration cannot resume this mode.
 
+## Approval and policy evidence
+
+- Separate production release approval: the operator explicitly requested the
+  production watch steps and then selected the exact target on 2026-07-24.
+- Privacy review reference: `privacy_review_watch_20260724_v1`. It records that
+  exact operator-selected username; X resolved the same username, and the
+  resulting numeric ID was bound as a secret to prevent later handle takeover.
+- Fresh policy review: X's official Automation Rules were re-read on
+  2026-07-24 (`https://help.x.com/en/rules-and-policies/x-automation`, page
+  updated April 2026).
+- Review result: read-only detection and human review links remain in scope.
+  Automated Likes remain prohibited and are not implemented. No automated
+  Repost capability was enabled.
+
 ## Verification
 
 - Full `pnpm check`: passed
@@ -32,11 +46,12 @@ incomplete or mixed X-write configuration cannot resume this mode.
 - Dedicated activation-script test: passed
 - Keychain-backed production preflight: passed
 - Deployed code version:
-  `a031b5ba-a993-48f6-86c6-caaeed570dfa`
+  `fc116d35-9420-45ed-9f6d-687b19d06315`
 - Latest secret-change version:
   `7b8813a8-8f8a-4c81-aabd-10434c605171`
 - Production active-watch count: one
 - Production pending-candidate count after initial poll: nine
+- A second Cron poll completed after the 15-minute interval with no failure
 - X-write audit count since watch registration: zero
 - Operator Pages deployment:
   `https://67e9a635.cubelic-ops-production.pages.dev`
