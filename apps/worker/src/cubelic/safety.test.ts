@@ -160,4 +160,27 @@ describe('CUBΣLIC centralized Phase 1 route boundary', () => {
       ...privacyReview,
     }))).toBe(false);
   });
+
+  it('disables every X capability when watch and write flags conflict', () => {
+    const conflicting = env({
+      CUBELIC_PHASE3_ENABLED: 'true',
+      CUBELIC_PHASE3_DELIVERY_MODE: 'x',
+      PHASE3_RELEASE_APPROVED: 'true',
+      STAGING_PHASE3_SMOKE_VERIFIED: 'true',
+      CUBELIC_HUMAN_INTERACTIONS_ENABLED: 'true',
+      HUMAN_INTERACTIONS_RELEASE_APPROVED: 'true',
+      STAGING_HUMAN_INTERACTIONS_SMOKE_VERIFIED: 'true',
+      X_INTERACTION_WATCH_ENABLED: 'true',
+      X_INTERACTION_WATCH_RELEASE_APPROVED: 'true',
+      X_INTERACTION_WATCH_STAGING_SMOKE_VERIFIED: 'true',
+      X_INTERACTION_WATCH_PRIVACY_REVIEW_APPROVED: 'true',
+      X_INTERACTION_WATCH_PRIVACY_REVIEW_ID: 'privacy_review_test_v1',
+      X_INTERACTION_WATCH_REVIEWED_TARGET_USER_ID: '1900000000000000100',
+      X_INTERACTION_WATCH_BEARER_TOKEN: 'read-only-bearer-token-with-at-least-32-bytes',
+    });
+
+    expect(isPhase3PublicationEnabled(conflicting)).toBe(false);
+    expect(isNamedHumanInteractionEnabled(conflicting)).toBe(false);
+    expect(isInteractionWatchEnabled(conflicting)).toBe(false);
+  });
 });

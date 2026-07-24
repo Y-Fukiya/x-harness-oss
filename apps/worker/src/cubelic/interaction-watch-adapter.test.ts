@@ -78,4 +78,17 @@ describe('interaction-watch application-only credential boundary', () => {
       code: 'interaction_watch_credential_unverified',
     });
   });
+
+  it('rejects a non-application-only 403 response as indeterminate', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(
+      JSON.stringify({ title: 'Forbidden', detail: 'Missing scope' }),
+      { status: 403 },
+    )));
+
+    await expect(
+      buildInteractionWatchReadAdapter(env()).verifyTargetUsername('approved_target'),
+    ).rejects.toMatchObject({
+      code: 'interaction_watch_credential_unverified',
+    });
+  });
 });

@@ -36,6 +36,7 @@ export function isPhase3DeliveryConfigured(env: Env['Bindings']): boolean {
 
 export function isPhase3PublicationEnabled(env: Env['Bindings']): boolean {
   return env.CUBELIC_PHASE3_ENABLED === 'true'
+    && env.X_INTERACTION_WATCH_ENABLED !== 'true'
     && isPhase3DeliveryConfigured(env)
     && env.PHASE3_RELEASE_APPROVED === 'true'
     && env.STAGING_PHASE3_SMOKE_VERIFIED === 'true';
@@ -60,6 +61,7 @@ export function isNamedHumanInteractionEnabled(env: Env['Bindings']): boolean {
   const verifiedRelease = env.HUMAN_INTERACTIONS_RELEASE_APPROVED === 'true'
     && env.STAGING_HUMAN_INTERACTIONS_SMOKE_VERIFIED === 'true';
   return env.CUBELIC_HUMAN_INTERACTIONS_ENABLED === 'true'
+    && env.X_INTERACTION_WATCH_ENABLED !== 'true'
     && isPhase3DeliveryConfigured(env)
     && (stagingSmokeMode || verifiedRelease);
 }

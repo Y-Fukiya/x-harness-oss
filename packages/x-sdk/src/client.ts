@@ -518,7 +518,11 @@ export class XClient {
 
     if (!res.ok) {
       const text = await res.text();
-      throw new XApiError(`X API ${method} ${path} failed: ${res.status} ${text}`, res.status);
+      throw new XApiError(
+        `X API ${method} ${path} failed: ${res.status} ${text}`,
+        res.status,
+        text,
+      );
     }
 
     return res.json() as Promise<T>;
@@ -529,6 +533,7 @@ export class XApiError extends Error {
   constructor(
     message: string,
     public readonly status: number,
+    public readonly responseBody?: string,
   ) {
     super(message);
     this.name = 'XApiError';

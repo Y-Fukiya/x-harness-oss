@@ -115,7 +115,16 @@ async function assertApplicationOnlyCredential(client: XClient): Promise<void> {
   try {
     await client.getMe();
   } catch (error) {
-    if (error instanceof XApiError && error.status === 403) return;
+    if (error instanceof XApiError && error.status === 403) {
+      try {
+        const body = JSON.parse(error.responseBody ?? '') as {
+          title?: unknown;
+        };
+        if (body.title === 'Unsupported Authentication') return;
+      } catch {
+        // An unstructured 403 does not prove application-only authentication.
+      }
+    }
     throw new PublicationPolicyError(
       'interaction_watch_credential_unverified',
       'The X read credential could not be verified as application-only',

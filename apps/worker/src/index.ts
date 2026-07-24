@@ -39,7 +39,10 @@ import type { MediaBodyWriter } from './cubelic/media-delivery.js';
 import { processDueCubelicPublications } from './cubelic/adapter.js';
 import { processInteractionWatches } from './cubelic/interaction-watch.js';
 import { lineConnections } from './routes/line-connections.js';
-import { verifyOrInitializeCredentialKeyState } from '@x-harness/db';
+import {
+  appendCubelicAudit,
+  verifyOrInitializeCredentialKeyState,
+} from '@x-harness/db';
 
 export type Env = {
   Bindings: {
@@ -169,21 +172,52 @@ app.put('/api/settings', async (c) => {
 
 app.notFound((c) => c.json({ success: false, error: 'Not found' }, 404));
 
+type ScheduledRuntimeDependencies = {
+  processWatches: typeof processInteractionWatches;
+  processPublications: typeof processDueCubelicPublications;
+  verifyCredentialState: typeof verifyOrInitializeCredentialKeyState;
+  appendAudit: typeof appendCubelicAudit;
+};
+
+export async function runScheduledRuntime(
+  env: Env['Bindings'],
+  dependencies: ScheduledRuntimeDependencies = {
+    processWatches: processInteractionWatches,
+    processPublications: processDueCubelicPublications,
+    verifyCredentialState: verifyOrInitializeCredentialKeyState,
+    appendAudit: appendCubelicAudit,
+  },
+): Promise<void> {
+  if (env.X_INTERACTION_WATCH_ENABLED === 'true') {
+    if (isInteractionWatchEnabled(env)) {
+      await dependencies.processWatches(env);
+    } else {
+      await dependencies.appendAudit(env.DB, {
+        actor: 'system',
+        action: 'interaction_watch.configuration_rejected',
+        entityType: 'system',
+        entityId: 'interaction_watch',
+        before: {},
+        after: { failClosed: true },
+        correlationId: `interaction-watch-config:${crypto.randomUUID()}`,
+      });
+    }
+    return;
+  }
+  await dependencies.verifyCredentialState(
+    env.DB,
+    env.CREDENTIAL_ENCRYPTION_KEY,
+    env.CREDENTIAL_ENCRYPTION_KEY_VERSION,
+  );
+  await dependencies.processPublications(env);
+}
+
 async function scheduled(
   _event: ScheduledEvent,
   env: Env['Bindings'],
   _ctx: ExecutionContext,
 ): Promise<void> {
-  if (isInteractionWatchEnabled(env)) {
-    await processInteractionWatches(env);
-    return;
-  }
-  await verifyOrInitializeCredentialKeyState(
-    env.DB,
-    env.CREDENTIAL_ENCRYPTION_KEY,
-    env.CREDENTIAL_ENCRYPTION_KEY_VERSION,
-  );
-  await processDueCubelicPublications(env);
+  await runScheduledRuntime(env);
 }
 
 export default {
