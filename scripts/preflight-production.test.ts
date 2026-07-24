@@ -20,19 +20,20 @@ const productionEnvironment = {
   CUBELIC_PHASE3_DELIVERY_MODE: 'x',
   CUBELIC_PHASE3_MEDIA_ENABLED: 'false',
   CUBELIC_PHASE3_MEDIA_SMOKE_MODE: 'false',
-  CUBELIC_PHASE3_ENABLED: 'true',
+  CUBELIC_PHASE3_ENABLED: 'false',
   CUBELIC_HUMAN_INTERACTIONS_ENABLED: 'false',
   CUBELIC_HUMAN_INTERACTIONS_SMOKE_MODE: 'false',
-  X_INTERACTION_WATCH_ENABLED: 'false',
+  X_INTERACTION_WATCH_ENABLED: 'true',
   X_INTERACTION_WATCH_SMOKE_MODE: 'false',
-  X_INTERACTION_WATCH_RELEASE_APPROVED: 'false',
-  X_INTERACTION_WATCH_STAGING_SMOKE_VERIFIED: 'false',
-  X_INTERACTION_WATCH_PRIVACY_REVIEW_APPROVED: 'false',
-  X_INTERACTION_WATCH_PRIVACY_REVIEW_ID: '',
-  X_INTERACTION_WATCH_REVIEWED_TARGET_USER_ID: '',
-  CUBELIC_PHASE3_SCHEDULE_POLICIES: 'event_notice:event_notice_manual_v1',
-  PHASE3_RELEASE_APPROVED: 'true',
-  STAGING_PHASE3_SMOKE_VERIFIED: 'true',
+  X_INTERACTION_WATCH_RELEASE_APPROVED: 'true',
+  X_INTERACTION_WATCH_STAGING_SMOKE_VERIFIED: 'true',
+  X_INTERACTION_WATCH_PRIVACY_REVIEW_APPROVED: 'true',
+  X_INTERACTION_WATCH_PRIVACY_REVIEW_ID: 'privacy_review_watch_20260724_v1',
+  X_INTERACTION_WATCH_REVIEWED_TARGET_USER_ID: '1900000000000000100',
+  X_INTERACTION_WATCH_BEARER_TOKEN: 'w'.repeat(32),
+  CUBELIC_PHASE3_SCHEDULE_POLICIES: '',
+  PHASE3_RELEASE_APPROVED: 'false',
+  STAGING_PHASE3_SMOKE_VERIFIED: 'false',
   STAGING_PHASE3_MEDIA_SMOKE_VERIFIED: 'false',
   MEDIA_RETENTION_POLICY_VERIFIED: 'false',
   HUMAN_INTERACTIONS_RELEASE_APPROVED: 'false',
@@ -55,17 +56,24 @@ function preflight(overrides: Record<string, string> = {}) {
 }
 
 describe('production preflight phase boundaries', () => {
-  it('rejects a Phase 1 shell when the deployed production config requests Phase 3', () => {
+  it('rejects a release shell that does not match the deployed watch mode', () => {
     const result = preflight({
       CUBELIC_PHASE3_ENABLED: 'false',
       CUBELIC_PHASE3_SCHEDULE_POLICIES: '',
       PHASE3_RELEASE_APPROVED: 'false',
       STAGING_PHASE3_SMOKE_VERIFIED: 'false',
+      X_INTERACTION_WATCH_ENABLED: 'false',
+      X_INTERACTION_WATCH_RELEASE_APPROVED: 'false',
+      X_INTERACTION_WATCH_STAGING_SMOKE_VERIFIED: 'false',
+      X_INTERACTION_WATCH_PRIVACY_REVIEW_APPROVED: 'false',
+      X_INTERACTION_WATCH_PRIVACY_REVIEW_ID: '',
+      X_INTERACTION_WATCH_REVIEWED_TARGET_USER_ID: '',
+      X_INTERACTION_WATCH_BEARER_TOKEN: '',
       GLOBAL_PUBLISHING_DISABLED: 'true',
     });
 
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain('wrangler production CUBELIC_PHASE3_ENABLED does not match');
+    expect(result.stderr).toContain('wrangler production X_INTERACTION_WATCH_ENABLED does not match');
   });
 
   it('requires a distinct Hermes token only when Hermes runtime is enabled', () => {
@@ -180,6 +188,7 @@ describe('production preflight phase boundaries', () => {
       X_INTERACTION_WATCH_PRIVACY_REVIEW_APPROVED: 'false',
       X_INTERACTION_WATCH_PRIVACY_REVIEW_ID: '',
       X_INTERACTION_WATCH_REVIEWED_TARGET_USER_ID: '',
+      X_INTERACTION_WATCH_BEARER_TOKEN: '',
       GLOBAL_PUBLISHING_DISABLED: 'false',
     });
 
@@ -191,6 +200,7 @@ describe('production preflight phase boundaries', () => {
     expect(missingGates.stderr).toContain('X_INTERACTION_WATCH_PRIVACY_REVIEW_ID must contain');
 
     const mixedWithWrites = preflight({
+      CUBELIC_PHASE3_ENABLED: 'true',
       X_INTERACTION_WATCH_ENABLED: 'true',
       X_INTERACTION_WATCH_SMOKE_MODE: 'false',
       X_INTERACTION_WATCH_RELEASE_APPROVED: 'true',
@@ -206,7 +216,7 @@ describe('production preflight phase boundaries', () => {
     );
   });
 
-  it('allows an explicitly approved Phase 3 release only with exact allowlists and resumed environment', () => {
+  it('rejects switching from the deployed watch mode to Phase 3 without a reviewed config change', () => {
     const missingApproval = preflight({
       CUBELIC_PHASE3_ENABLED: 'true',
       GLOBAL_PUBLISHING_DISABLED: 'false',
@@ -223,8 +233,10 @@ describe('production preflight phase boundaries', () => {
       STAGING_PHASE3_SMOKE_VERIFIED: 'true',
       CUBELIC_PHASE3_SCHEDULE_POLICIES: 'event_notice:event_notice_manual_v1',
     });
-    expect(approved.status).toBe(0);
-    expect(approved.stdout).toContain('Phase 3 publication capability');
+    expect(approved.status).toBe(1);
+    expect(approved.stderr).toContain(
+      'wrangler production CUBELIC_PHASE3_ENABLED does not match',
+    );
 
     const mismatchedDeployment = preflight({
       CUBELIC_PHASE3_ENABLED: 'true',

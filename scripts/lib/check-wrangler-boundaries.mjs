@@ -107,8 +107,15 @@ export function validateWranglerBoundaries(wrangler) {
           || !/^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/.test(
             values.X_INTERACTION_WATCH_PRIVACY_REVIEW_ID ?? '',
           )
-          || !/^[1-9][0-9]{4,29}$/.test(
-            values.X_INTERACTION_WATCH_REVIEWED_TARGET_USER_ID ?? '',
+          || (
+            environment === 'staging'
+              ? !/^[1-9][0-9]{4,29}$/.test(
+                values.X_INTERACTION_WATCH_REVIEWED_TARGET_USER_ID ?? '',
+              )
+              : Object.hasOwn(
+                values,
+                'X_INTERACTION_WATCH_REVIEWED_TARGET_USER_ID',
+              )
           )
         ) {
           violations.push(`${prefix} interaction watches require privacy evidence bound to one X user id`);
@@ -120,7 +127,7 @@ export function validateWranglerBoundaries(wrangler) {
         || values.X_INTERACTION_WATCH_STAGING_SMOKE_VERIFIED !== 'false'
         || values.X_INTERACTION_WATCH_PRIVACY_REVIEW_APPROVED !== 'false'
         || values.X_INTERACTION_WATCH_PRIVACY_REVIEW_ID !== ''
-        || values.X_INTERACTION_WATCH_REVIEWED_TARGET_USER_ID !== ''
+        || (values.X_INTERACTION_WATCH_REVIEWED_TARGET_USER_ID ?? '') !== ''
       ) {
         violations.push(`${prefix} disabled interaction watches must keep all watch gates false`);
       }

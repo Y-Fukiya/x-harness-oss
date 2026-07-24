@@ -95,6 +95,36 @@ GLOBAL_PUBLISHING_DISABLED = "false"
     );
   });
 
+  it('accepts a production interaction watch whose reviewed target id is secret-backed', () => {
+    const violations = validateWranglerBoundaries(`
+[env.production.vars]
+CUBELIC_SAFE_MODE = "true"
+CUBELIC_PHASE3_ENABLED = "false"
+CUBELIC_PHASE3_MEDIA_ENABLED = "false"
+CUBELIC_PHASE3_MEDIA_SMOKE_MODE = "false"
+CUBELIC_PHASE3_SCHEDULE_POLICIES = ""
+CUBELIC_HUMAN_INTERACTIONS_ENABLED = "false"
+CUBELIC_HUMAN_INTERACTIONS_SMOKE_MODE = "false"
+PHASE3_RELEASE_APPROVED = "false"
+STAGING_PHASE3_SMOKE_VERIFIED = "false"
+STAGING_PHASE3_MEDIA_SMOKE_VERIFIED = "false"
+MEDIA_RETENTION_POLICY_VERIFIED = "false"
+HUMAN_INTERACTIONS_RELEASE_APPROVED = "false"
+STAGING_HUMAN_INTERACTIONS_SMOKE_VERIFIED = "false"
+X_INTERACTION_WATCH_ENABLED = "true"
+X_INTERACTION_WATCH_SMOKE_MODE = "false"
+X_INTERACTION_WATCH_RELEASE_APPROVED = "true"
+X_INTERACTION_WATCH_STAGING_SMOKE_VERIFIED = "true"
+X_INTERACTION_WATCH_PRIVACY_REVIEW_APPROVED = "true"
+X_INTERACTION_WATCH_PRIVACY_REVIEW_ID = "privacy_review_watch_20260724_v1"
+GLOBAL_PUBLISHING_DISABLED = "false"
+`);
+
+    expect(violations.filter((violation) => (
+      violation.includes('interaction watch')
+    ))).toEqual([]);
+  });
+
   it('rejects media delivery without Phase 3 and a dedicated R2 binding', () => {
     const violations = validateWranglerBoundaries(`
 [env.production]

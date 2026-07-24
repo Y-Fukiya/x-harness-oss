@@ -260,6 +260,50 @@ describe('CUBΣLIC Worker API integration', () => {
     });
   });
 
+  it('resumes an approved read-only interaction watch without opening an X-write operation window', async () => {
+    bindings.CUBELIC_PHASE3_ENABLED = 'false';
+    bindings.CUBELIC_HUMAN_INTERACTIONS_ENABLED = 'false';
+    bindings.X_INTERACTION_WATCH_ENABLED = 'true';
+    bindings.X_INTERACTION_WATCH_RELEASE_APPROVED = 'true';
+    bindings.X_INTERACTION_WATCH_STAGING_SMOKE_VERIFIED = 'true';
+    await setCubelicEmergencyStop(db, true, 'integration-operator', {
+      actor: 'human',
+      action: 'system.emergency_stop',
+      entityType: 'system',
+      entityId: 'interaction_watch',
+      before: { stopped: false },
+      after: { stopped: true },
+      correlationId: 'corr_watch_resume_stop',
+    });
+
+    const response = await request('/api/cubelic/admin/emergency-resume', {
+      method: 'POST',
+      headers: {
+        'X-Human-Approval-Key': 'integration-human-key-with-at-least-32-bytes',
+      },
+      body: '{}',
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      success: true,
+      data: {
+        stopped: false,
+        interactionWatch: true,
+      },
+    });
+    await expect(getCubelicEmergencyStop(db)).resolves.toBe(false);
+    const audit = await db.prepare(
+      `SELECT after_json FROM cubelic_audit_logs
+       WHERE action = 'system.interaction_watch_resumed'
+       ORDER BY timestamp DESC LIMIT 1`,
+    ).first<{ after_json: string }>();
+    expect(JSON.parse(audit?.after_json ?? '{}')).toEqual({
+      stopped: false,
+      interactionWatch: true,
+    });
+  });
+
   it('queues each newly detected original post once without returning its body', async () => {
     bindings.ENVIRONMENT = 'staging';
     bindings.X_INTERACTION_WATCH_ENABLED = 'true';

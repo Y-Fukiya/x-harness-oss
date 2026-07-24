@@ -244,9 +244,6 @@ const expectedProductionVars = {
   X_INTERACTION_WATCH_PRIVACY_REVIEW_ID: interactionWatchEnabled
     ? process.env.X_INTERACTION_WATCH_PRIVACY_REVIEW_ID
     : '',
-  X_INTERACTION_WATCH_REVIEWED_TARGET_USER_ID: interactionWatchEnabled
-    ? process.env.X_INTERACTION_WATCH_REVIEWED_TARGET_USER_ID
-    : '',
   PHASE3_RELEASE_APPROVED: phase3Enabled ? 'true' : 'false',
   STAGING_PHASE3_SMOKE_VERIFIED: phase3Enabled ? 'true' : 'false',
   STAGING_PHASE3_MEDIA_SMOKE_VERIFIED: phase3MediaEnabled ? 'true' : 'false',
@@ -262,6 +259,11 @@ for (const [name, expected] of Object.entries(expectedProductionVars)) {
   if (productionVar(name) !== expected) {
     errors.push(`wrangler production ${name} does not match the requested release mode`);
   }
+}
+if (productionVar('X_INTERACTION_WATCH_REVIEWED_TARGET_USER_ID') !== undefined) {
+  errors.push(
+    'wrangler production X_INTERACTION_WATCH_REVIEWED_TARGET_USER_ID must be secret-backed',
+  );
 }
 
 if (errors.length) {

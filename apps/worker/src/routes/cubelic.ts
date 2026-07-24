@@ -2272,6 +2272,22 @@ cubelic.post('/api/cubelic/admin/emergency-resume', async (c) => {
     });
     return c.json({ success: true, data: { stopped: false, normalOperation: true } });
   }
+  if (isInteractionWatchEnabled(c.env)) {
+    const wasStopped = await getCubelicEmergencyStop(c.env.DB);
+    await setCubelicEmergencyStop(c.env.DB, false, actorName(c), {
+      actor: 'human',
+      action: 'system.interaction_watch_resumed',
+      entityType: 'system',
+      entityId: 'interaction_watch',
+      before: { stopped: wasStopped },
+      after: { stopped: false, interactionWatch: true },
+      correlationId: correlationId(c),
+    });
+    return c.json({
+      success: true,
+      data: { stopped: false, interactionWatch: true },
+    });
+  }
   const operationWindow = await getCubelicOperationWindow(c.env.DB);
   if (!operationWindow?.active) {
     return c.json({ success: false, error: 'A valid production operation window is required before resume', code: 'operation_window_inactive' }, 423);
