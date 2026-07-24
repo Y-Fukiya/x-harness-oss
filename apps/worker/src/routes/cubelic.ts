@@ -72,6 +72,7 @@ import {
   recordCubelicRejections,
   reconcileCubelicPublicationNotPublished,
   reconcileCubelicPublicationPublished,
+  replaceInteractionWatch,
   reserveCubelicDraftApproval,
   reserveCubelicHumanInteraction,
   setCubelicDraftDecision,
@@ -349,6 +350,7 @@ function isEmergencyAdmin(path: string): boolean {
     || path === '/api/cubelic/admin/emergency-resume'
     || path === '/api/cubelic/admin/operation-window'
     || path === '/api/cubelic/admin/operator-bootstrap'
+    || path === '/api/cubelic/admin/interaction-watch-target'
     || /^\/api\/cubelic\/media\/[^/]+\/quarantine$/.test(path)
     || /^\/api\/cubelic\/admin\/publications\/[^/]+\/reconcile$/.test(path);
 }
@@ -920,6 +922,106 @@ cubelic.post('/api/cubelic/interaction-watches', async (c) => {
       correlationId: correlationId(c),
     });
     return c.json({ success: true, data: watch }, 201);
+  } catch (error) {
+    return apiError(c, error);
+  }
+});
+
+cubelic.post('/api/cubelic/admin/interaction-watch-target', async (c) => {
+  try {
+    if (!isInteractionWatchEnabled(c.env)) {
+      throw new PublicationPolicyError(
+        'interaction_watches_disabled',
+        'Interaction watches are disabled',
+      );
+    }
+    const denied = await requireNamedHumanApproval(c);
+    if (denied) return denied;
+    const stopState = await getCubelicEmergencyStopState(c.env.DB);
+    if (!stopState.valid || !stopState.stopped) {
+      throw new PublicationPolicyError(
+        'interaction_watch_rotation_requires_stop',
+        'A valid active D1 emergency stop is required before replacing the watch target',
+      );
+    }
+    const body = await c.req.json<Record<string, unknown>>();
+    assertExactInteractionKeys(body, ['targetUsername']);
+    if (
+      typeof body.targetUsername !== 'string'
+      || !/^[A-Za-z0-9_]{1,15}$/.test(body.targetUsername)
+    ) {
+      throw new PublicationPolicyError(
+        'interaction_request_invalid',
+        'targetUsername must be one exact X username',
+      );
+    }
+    const activeWatches = await listInteractionWatches(c.env.DB);
+    if (activeWatches.length !== 1) {
+      throw new PublicationPolicyError(
+        'interaction_watch_rotation_state_invalid',
+        'Exactly one active interaction watch is required before replacement',
+      );
+    }
+    const currentWatch = activeWatches[0]!;
+    const reader = c.get('interactionWatchReadAdapter')
+      ?? buildInteractionWatchReadAdapter(c.env);
+    const verified = await reader.verifyTargetUsername(body.targetUsername);
+    if (!isInteractionWatchTargetApproved(c.env, verified.targetUserId)) {
+      throw new PublicationPolicyError(
+        'interaction_watch_target_not_reviewed',
+        'The resolved X user ID does not match the privacy-reviewed target',
+      );
+    }
+    if (verified.targetUserId === currentWatch.targetUserId) {
+      throw new PublicationPolicyError(
+        'interaction_watch_target_unchanged',
+        'The verified target is already active',
+      );
+    }
+    const watchId = `watch_${crypto.randomUUID()}` as InteractionWatchId;
+    const operatorId = namedHumanId(c) as XOperatorId;
+    const verifiedAt = new Date().toISOString();
+    const requestCorrelationId = correlationId(c);
+    const activeWatch = await replaceInteractionWatch(c.env.DB, currentWatch, {
+      watchId,
+      targetUserId: verified.targetUserId,
+      targetUsername: verified.verifiedUsername,
+      verifiedAt,
+      createdBy: operatorId,
+    }, {
+      retired: {
+        actor: 'human',
+        action: 'interaction_watch.retired',
+        entityType: 'interaction_watch',
+        entityId: currentWatch.watchId,
+        before: { status: 'active' },
+        after: { status: 'retired', replacementCreated: true },
+        correlationId: requestCorrelationId,
+      },
+      created: {
+        actor: 'human',
+        action: 'interaction_watch.created',
+        entityType: 'interaction_watch',
+        entityId: watchId,
+        before: {},
+        after: {
+          status: 'active',
+          targetIdentityVerified: true,
+          privacyReviewedTargetMatched: true,
+          privacyReviewId: c.env.X_INTERACTION_WATCH_PRIVACY_REVIEW_ID,
+          replacedExistingWatch: true,
+        },
+        correlationId: requestCorrelationId,
+      },
+    });
+    return c.json({
+      success: true,
+      data: {
+        retiredWatchId: currentWatch.watchId,
+        activeWatch,
+        stopped: true,
+      },
+    }, 201);
   } catch (error) {
     return apiError(c, error);
   }

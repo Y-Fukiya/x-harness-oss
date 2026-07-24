@@ -50,6 +50,7 @@ const migrationPaths = [
   fileURLToPath(new URL('../../../../packages/db/migrations/027-cubelic-media-delivery.sql', import.meta.url)),
   fileURLToPath(new URL('../../../../packages/db/migrations/028-cubelic-human-x-interactions.sql', import.meta.url)),
   fileURLToPath(new URL('../../../../packages/db/migrations/029-x-interaction-watch-queue.sql', import.meta.url)),
+  fileURLToPath(new URL('../../../../packages/db/migrations/030-interaction-watch-target-rotation.sql', import.meta.url)),
 ];
 
 describe('CUBΣLIC Worker API integration', () => {
@@ -258,6 +259,115 @@ describe('CUBΣLIC Worker API integration', () => {
       privacyReviewedTargetMatched: true,
       privacyReviewId: 'privacy_review_integration_v1',
     });
+  });
+
+  it('replaces the active watch while stopped and keeps exactly one reviewed target active', async () => {
+    bindings.X_INTERACTION_WATCH_ENABLED = 'true';
+    bindings.X_INTERACTION_WATCH_RELEASE_APPROVED = 'true';
+    bindings.X_INTERACTION_WATCH_STAGING_SMOKE_VERIFIED = 'true';
+    const approvalHeaders = {
+      'content-type': 'application/json',
+      'X-Human-Approval-Key': 'integration-human-key-with-at-least-32-bytes',
+    };
+    const created = await request('/api/cubelic/interaction-watches', {
+      method: 'POST',
+      headers: approvalHeaders,
+      body: JSON.stringify({ targetUsername: 'approved_target' }),
+    });
+    expect(created.status).toBe(201);
+    const originalWatchId = (
+      await created.json() as { data: { watchId: string } }
+    ).data.watchId;
+    discoverOriginalPosts.mockResolvedValueOnce([{
+      postId: '1900000000000000301' as never,
+      authorId: '1900000000000000100' as never,
+      createdAt: '2026-07-24T03:00:00.000Z',
+      referencedTypes: [],
+    }]);
+    expect((await request(
+      `/api/cubelic/interaction-watches/${originalWatchId}/poll`,
+      {
+        method: 'POST',
+        headers: {
+          'X-Human-Approval-Key': 'integration-human-key-with-at-least-32-bytes',
+        },
+      },
+    )).status).toBe(200);
+
+    bindings.X_INTERACTION_WATCH_REVIEWED_TARGET_USER_ID = '1900000000000000200';
+    bindings.X_INTERACTION_WATCH_PRIVACY_REVIEW_ID = 'privacy_review_integration_v2';
+    vi.mocked(interactionWatchReader.verifyTargetUsername).mockResolvedValueOnce({
+      targetUserId: '1900000000000000200' as never,
+      verifiedUsername: 'replacement_x',
+    });
+    const replacementRequest = () => request(
+      '/api/cubelic/admin/interaction-watch-target',
+      {
+        method: 'POST',
+        headers: approvalHeaders,
+        body: JSON.stringify({ targetUsername: 'replacement_x' }),
+      },
+    );
+    const runningReplacement = await replacementRequest();
+    expect(runningReplacement.status).toBe(422);
+    await expect(runningReplacement.json()).resolves.toMatchObject({
+      code: 'interaction_watch_rotation_requires_stop',
+    });
+
+    await setCubelicEmergencyStop(db, true, 'integration-operator', {
+      actor: 'human',
+      action: 'system.emergency_stop',
+      entityType: 'system',
+      entityId: 'publishing',
+      before: { stopped: false },
+      after: { stopped: true },
+      correlationId: 'corr_watch_target_replace_stop',
+    });
+    const replaced = await replacementRequest();
+    expect(replaced.status).toBe(201);
+    const replacementBody = await replaced.json() as {
+      data: { retiredWatchId: string; activeWatch: { watchId: string } };
+    };
+    expect(replacementBody).toMatchObject({
+      data: {
+        retiredWatchId: expect.stringMatching(/^watch_/),
+        activeWatch: {
+          targetUserId: '1900000000000000200',
+          targetUsername: 'replacement_x',
+          status: 'active',
+        },
+      },
+    });
+    await expect((await request('/api/cubelic/interaction-watches')).json())
+      .resolves.toMatchObject({
+        data: [{
+          targetUserId: '1900000000000000200',
+          targetUsername: 'replacement_x',
+          status: 'active',
+        }],
+      });
+    await expect((await request('/api/cubelic/interaction-candidates')).json())
+      .resolves.toEqual({ success: true, data: [] });
+    await expect(db.prepare(
+      `SELECT status FROM x_interaction_watches WHERE watch_id = ?`,
+    ).bind(originalWatchId).first()).resolves.toEqual({ status: 'retired' });
+    await expect(db.prepare(
+      `SELECT COUNT(*) AS count FROM x_interaction_candidates WHERE watch_id = ?`,
+    ).bind(originalWatchId).first()).resolves.toEqual({ count: 1 });
+    const replacementAudits = await db.prepare(
+      `SELECT action FROM cubelic_audit_logs
+       WHERE entity_id IN (?, ?)
+         AND action IN ('interaction_watch.retired', 'interaction_watch.created')
+       ORDER BY action`,
+    ).bind(
+      originalWatchId,
+      replacementBody.data.activeWatch.watchId,
+    ).all<{ action: string }>();
+    expect(replacementAudits.results).toEqual([
+      { action: 'interaction_watch.created' },
+      { action: 'interaction_watch.created' },
+      { action: 'interaction_watch.retired' },
+    ]);
   });
 
   it('resumes an approved read-only interaction watch without opening an X-write operation window', async () => {

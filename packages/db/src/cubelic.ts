@@ -106,7 +106,8 @@ export interface InteractionWatchRecord {
   targetUserId: XUserId;
   targetUsername: string;
   verifiedAt: string;
-  status: 'active' | 'paused';
+  status: 'active' | 'retired';
+  retiredAt: string | null;
   lastSeenPostId: XPostId | null;
   lastPolledAt: string | null;
   pollDayUtc: string | null;
@@ -122,6 +123,7 @@ interface InteractionWatchRow {
   target_username: string;
   verified_at: string;
   status: InteractionWatchRecord['status'];
+  retired_at: string | null;
   last_seen_post_id: string | null;
   last_polled_at: string | null;
   poll_day_utc: string | null;
@@ -138,6 +140,7 @@ function interactionWatchFromRow(row: InteractionWatchRow): InteractionWatchReco
     targetUsername: row.target_username,
     verifiedAt: row.verified_at,
     status: row.status,
+    retiredAt: row.retired_at,
     lastSeenPostId: row.last_seen_post_id as XPostId | null,
     lastPolledAt: row.last_polled_at,
     pollDayUtc: row.poll_day_utc,
@@ -163,10 +166,10 @@ export async function createInteractionWatch(
   await runCubelicMutation(db, [
     db.prepare(
       `INSERT INTO x_interaction_watches (
-        watch_id, singleton_key, target_user_id, target_username, verified_at,
-        status, last_seen_post_id, last_polled_at, poll_day_utc, poll_count,
+        watch_id, target_user_id, target_username, verified_at,
+        status, retired_at, last_seen_post_id, last_polled_at, poll_day_utc, poll_count,
         created_by, created_at, updated_at
-      ) VALUES (?, 1, ?, ?, ?, 'active', NULL, NULL, NULL, 0, ?, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, 'active', NULL, NULL, NULL, NULL, 0, ?, ?, ?)`,
     ).bind(
       input.watchId,
       input.targetUserId,
@@ -183,6 +186,7 @@ export async function createInteractionWatch(
     targetUsername: input.targetUsername,
     verifiedAt: input.verifiedAt,
     status: 'active',
+    retiredAt: null,
     lastSeenPostId: null,
     lastPolledAt: null,
     pollDayUtc: null,
@@ -197,10 +201,12 @@ export async function listInteractionWatches(
   db: D1Database,
 ): Promise<InteractionWatchRecord[]> {
   const rows = await db.prepare(
-    `SELECT watch_id, target_user_id, target_username, verified_at, status,
+    `SELECT watch_id, target_user_id, target_username, verified_at, status, retired_at,
       last_seen_post_id, last_polled_at, poll_day_utc, poll_count,
       created_by, created_at, updated_at
-     FROM x_interaction_watches ORDER BY created_at ASC`,
+     FROM x_interaction_watches
+     WHERE status = 'active'
+     ORDER BY created_at ASC`,
   ).all<InteractionWatchRow>();
   return rows.results.map(interactionWatchFromRow);
 }
@@ -210,12 +216,67 @@ export async function getInteractionWatch(
   watchId: InteractionWatchId,
 ): Promise<InteractionWatchRecord | null> {
   const row = await db.prepare(
-    `SELECT watch_id, target_user_id, target_username, verified_at, status,
+    `SELECT watch_id, target_user_id, target_username, verified_at, status, retired_at,
       last_seen_post_id, last_polled_at, poll_day_utc, poll_count,
       created_by, created_at, updated_at
      FROM x_interaction_watches WHERE watch_id = ?`,
   ).bind(watchId).first<InteractionWatchRow>();
   return row ? interactionWatchFromRow(row) : null;
+}
+
+export async function replaceInteractionWatch(
+  db: D1Database,
+  currentWatch: InteractionWatchRecord,
+  input: {
+    watchId: InteractionWatchId;
+    targetUserId: XUserId;
+    targetUsername: string;
+    verifiedAt: string;
+    createdBy: XOperatorId;
+  },
+  audits: {
+    retired: AuditInput;
+    created: AuditInput;
+  },
+): Promise<InteractionWatchRecord> {
+  const timestamp = nowIso();
+  await runCubelicMutation(db, [
+    db.prepare(
+      `UPDATE x_interaction_watches
+       SET status = 'retired', retired_at = ?, updated_at = ?
+       WHERE watch_id = ? AND status = 'active'`,
+    ).bind(timestamp, timestamp, currentWatch.watchId),
+    db.prepare(
+      `INSERT INTO x_interaction_watches (
+        watch_id, target_user_id, target_username, verified_at,
+        status, retired_at, last_seen_post_id, last_polled_at, poll_day_utc, poll_count,
+        created_by, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, 'active', NULL, NULL, NULL, NULL, 0, ?, ?, ?)`,
+    ).bind(
+      input.watchId,
+      input.targetUserId,
+      input.targetUsername,
+      input.verifiedAt,
+      input.createdBy,
+      timestamp,
+      timestamp,
+    ),
+  ], [audits.retired, audits.created]);
+  return {
+    watchId: input.watchId,
+    targetUserId: input.targetUserId,
+    targetUsername: input.targetUsername,
+    verifiedAt: input.verifiedAt,
+    status: 'active',
+    retiredAt: null,
+    lastSeenPostId: null,
+    lastPolledAt: null,
+    pollDayUtc: null,
+    pollCount: 0,
+    createdBy: input.createdBy,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  };
 }
 
 export async function updateInteractionWatchCursor(
@@ -345,9 +406,12 @@ export async function listInteractionCandidates(
   db: D1Database,
 ): Promise<InteractionCandidateRecord[]> {
   const rows = await db.prepare(
-    `SELECT candidate_id, watch_id, post_id, author_id, post_created_at,
-      status, detected_at
-     FROM x_interaction_candidates ORDER BY detected_at DESC`,
+    `SELECT c.candidate_id, c.watch_id, c.post_id, c.author_id, c.post_created_at,
+      c.status, c.detected_at
+     FROM x_interaction_candidates c
+     INNER JOIN x_interaction_watches w ON w.watch_id = c.watch_id
+     WHERE w.status = 'active'
+     ORDER BY c.detected_at DESC`,
   ).all<InteractionCandidateRow>();
   return rows.results.map(interactionCandidateFromRow);
 }

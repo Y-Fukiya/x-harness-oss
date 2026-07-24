@@ -787,7 +787,6 @@ VALUES ('emergency_stop', 'true', '2026-07-21T00:00:00.000Z', 'system');
 
 CREATE TABLE IF NOT EXISTS x_interaction_watches (
   watch_id TEXT PRIMARY KEY,
-  singleton_key INTEGER NOT NULL DEFAULT 1 UNIQUE CHECK (singleton_key = 1),
   target_user_id TEXT NOT NULL UNIQUE CHECK (
     length(target_user_id) BETWEEN 5 AND 30
     AND target_user_id NOT GLOB '*[^0-9]*'
@@ -797,7 +796,8 @@ CREATE TABLE IF NOT EXISTS x_interaction_watches (
     AND target_username NOT GLOB '*[^A-Za-z0-9_]*'
   ),
   verified_at TEXT NOT NULL,
-  status TEXT NOT NULL CHECK (status IN ('active', 'paused')),
+  status TEXT NOT NULL CHECK (status IN ('active', 'retired')),
+  retired_at TEXT,
   last_seen_post_id TEXT CHECK (
     last_seen_post_id IS NULL
     OR (
@@ -810,15 +810,33 @@ CREATE TABLE IF NOT EXISTS x_interaction_watches (
   poll_count INTEGER NOT NULL DEFAULT 0 CHECK (poll_count BETWEEN 0 AND 96),
   created_by TEXT NOT NULL,
   created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
+  updated_at TEXT NOT NULL,
+  CHECK (
+    (status = 'active' AND retired_at IS NULL)
+    OR (status = 'retired' AND retired_at IS NOT NULL)
+  )
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_x_interaction_watches_one_active
+  ON x_interaction_watches(status)
+  WHERE status = 'active';
 
 CREATE TRIGGER IF NOT EXISTS x_interaction_watches_emergency_stop_insert
 BEFORE INSERT ON x_interaction_watches
 WHEN COALESCE(
   (SELECT value FROM cubelic_system_flags WHERE key = 'emergency_stop'),
-  'true'
+  'invalid'
 ) <> 'false'
+AND NOT (
+  (SELECT value FROM cubelic_system_flags WHERE key = 'emergency_stop') = 'true'
+  AND NEW.status = 'active'
+  AND NOT EXISTS (
+    SELECT 1 FROM x_interaction_watches WHERE status = 'active'
+  )
+  AND EXISTS (
+    SELECT 1 FROM x_interaction_watches WHERE status = 'retired'
+  )
+)
 BEGIN
   SELECT RAISE(ABORT, 'emergency stop active');
 END;
@@ -827,8 +845,13 @@ CREATE TRIGGER IF NOT EXISTS x_interaction_watches_emergency_stop_update
 BEFORE UPDATE ON x_interaction_watches
 WHEN COALESCE(
   (SELECT value FROM cubelic_system_flags WHERE key = 'emergency_stop'),
-  'true'
+  'invalid'
 ) <> 'false'
+AND NOT (
+  (SELECT value FROM cubelic_system_flags WHERE key = 'emergency_stop') = 'true'
+  AND OLD.status = 'active'
+  AND NEW.status = 'retired'
+)
 BEGIN
   SELECT RAISE(ABORT, 'emergency stop active');
 END;
@@ -842,7 +865,6 @@ END;
 CREATE TRIGGER IF NOT EXISTS x_interaction_watches_identity_immutable
 BEFORE UPDATE ON x_interaction_watches
 WHEN NEW.watch_id IS NOT OLD.watch_id
-  OR NEW.singleton_key IS NOT OLD.singleton_key
   OR NEW.target_user_id IS NOT OLD.target_user_id
   OR NEW.target_username IS NOT OLD.target_username
   OR NEW.verified_at IS NOT OLD.verified_at
@@ -850,6 +872,21 @@ WHEN NEW.watch_id IS NOT OLD.watch_id
   OR NEW.created_at IS NOT OLD.created_at
 BEGIN
   SELECT RAISE(ABORT, 'interaction watch identity is immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS x_interaction_watches_retired_immutable
+BEFORE UPDATE ON x_interaction_watches
+WHEN OLD.status = 'retired'
+BEGIN
+  SELECT RAISE(ABORT, 'retired interaction watches are immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS x_interaction_watches_transition_guard
+BEFORE UPDATE ON x_interaction_watches
+WHEN NEW.status IS NOT OLD.status
+AND NOT (OLD.status = 'active' AND NEW.status = 'retired')
+BEGIN
+  SELECT RAISE(ABORT, 'invalid interaction watch status transition');
 END;
 
 CREATE TABLE IF NOT EXISTS x_interaction_candidates (
