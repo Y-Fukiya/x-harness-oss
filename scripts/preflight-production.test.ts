@@ -23,6 +23,12 @@ const productionEnvironment = {
   CUBELIC_PHASE3_ENABLED: 'true',
   CUBELIC_HUMAN_INTERACTIONS_ENABLED: 'false',
   CUBELIC_HUMAN_INTERACTIONS_SMOKE_MODE: 'false',
+  X_INTERACTION_WATCH_ENABLED: 'false',
+  X_INTERACTION_WATCH_SMOKE_MODE: 'false',
+  X_INTERACTION_WATCH_RELEASE_APPROVED: 'false',
+  X_INTERACTION_WATCH_STAGING_SMOKE_VERIFIED: 'false',
+  X_INTERACTION_WATCH_PRIVACY_REVIEW_APPROVED: 'false',
+  X_INTERACTION_WATCH_PRIVACY_REVIEW_ID: '',
   CUBELIC_PHASE3_SCHEDULE_POLICIES: 'event_notice:event_notice_manual_v1',
   PHASE3_RELEASE_APPROVED: 'true',
   STAGING_PHASE3_SMOKE_VERIFIED: 'true',
@@ -157,6 +163,43 @@ describe('production preflight phase boundaries', () => {
     );
     expect(missingGates.stderr).toContain(
       'missing secret environment variable: INTERACTION_FINGERPRINT_KEY',
+    );
+  });
+
+  it('requires a separate read-only credential, privacy review, and isolated release for interaction watches', () => {
+    const missingGates = preflight({
+      CUBELIC_PHASE3_ENABLED: 'false',
+      CUBELIC_PHASE3_SCHEDULE_POLICIES: '',
+      PHASE3_RELEASE_APPROVED: 'false',
+      STAGING_PHASE3_SMOKE_VERIFIED: 'false',
+      X_INTERACTION_WATCH_ENABLED: 'true',
+      X_INTERACTION_WATCH_SMOKE_MODE: 'false',
+      X_INTERACTION_WATCH_RELEASE_APPROVED: 'false',
+      X_INTERACTION_WATCH_STAGING_SMOKE_VERIFIED: 'false',
+      X_INTERACTION_WATCH_PRIVACY_REVIEW_APPROVED: 'false',
+      X_INTERACTION_WATCH_PRIVACY_REVIEW_ID: '',
+      GLOBAL_PUBLISHING_DISABLED: 'false',
+    });
+
+    expect(missingGates.status).toBe(1);
+    expect(missingGates.stderr).toContain(
+      'missing secret environment variable: X_INTERACTION_WATCH_BEARER_TOKEN',
+    );
+    expect(missingGates.stderr).toContain('X_INTERACTION_WATCH_RELEASE_APPROVED must be true');
+    expect(missingGates.stderr).toContain('X_INTERACTION_WATCH_PRIVACY_REVIEW_ID must contain');
+
+    const mixedWithWrites = preflight({
+      X_INTERACTION_WATCH_ENABLED: 'true',
+      X_INTERACTION_WATCH_SMOKE_MODE: 'false',
+      X_INTERACTION_WATCH_RELEASE_APPROVED: 'true',
+      X_INTERACTION_WATCH_STAGING_SMOKE_VERIFIED: 'true',
+      X_INTERACTION_WATCH_PRIVACY_REVIEW_APPROVED: 'true',
+      X_INTERACTION_WATCH_PRIVACY_REVIEW_ID: 'privacy-review:2026-07-24',
+      X_INTERACTION_WATCH_BEARER_TOKEN: 'w'.repeat(32),
+    });
+    expect(mixedWithWrites.status).toBe(1);
+    expect(mixedWithWrites.stderr).toContain(
+      'X interaction watches must be isolated from every X-write release',
     );
   });
 

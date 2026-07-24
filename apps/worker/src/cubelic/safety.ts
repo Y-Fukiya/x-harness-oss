@@ -69,7 +69,17 @@ export function isInteractionWatchEnabled(env: Env['Bindings']): boolean {
     && env.X_INTERACTION_WATCH_SMOKE_MODE === 'true';
   const verifiedRelease = env.X_INTERACTION_WATCH_RELEASE_APPROVED === 'true'
     && env.X_INTERACTION_WATCH_STAGING_SMOKE_VERIFIED === 'true';
+  const privacyReviewed = env.X_INTERACTION_WATCH_PRIVACY_REVIEW_APPROVED === 'true'
+    && /^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/.test(
+      env.X_INTERACTION_WATCH_PRIVACY_REVIEW_ID ?? '',
+    );
+  const readCredentialReady = stagingSmokeMode
+    || (env.X_INTERACTION_WATCH_BEARER_TOKEN?.length ?? 0) >= 32;
   return env.X_INTERACTION_WATCH_ENABLED === 'true'
+    && env.CUBELIC_PHASE3_ENABLED !== 'true'
+    && env.CUBELIC_HUMAN_INTERACTIONS_ENABLED !== 'true'
+    && privacyReviewed
+    && readCredentialReady
     && (stagingSmokeMode || verifiedRelease);
 }
 

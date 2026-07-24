@@ -72,15 +72,25 @@ CUBELIC_PHASE3_SCHEDULE_POLICIES = "event_notice:event_notice_manual_v1"
     const violations = validateWranglerBoundaries(`
 [env.production.vars]
 CUBELIC_SAFE_MODE = "true"
+CUBELIC_PHASE3_ENABLED = "true"
+CUBELIC_HUMAN_INTERACTIONS_ENABLED = "false"
 X_INTERACTION_WATCH_ENABLED = "true"
 X_INTERACTION_WATCH_SMOKE_MODE = "false"
 X_INTERACTION_WATCH_RELEASE_APPROVED = "false"
 X_INTERACTION_WATCH_STAGING_SMOKE_VERIFIED = "false"
+X_INTERACTION_WATCH_PRIVACY_REVIEW_APPROVED = "false"
+X_INTERACTION_WATCH_PRIVACY_REVIEW_ID = ""
 GLOBAL_PUBLISHING_DISABLED = "false"
 `);
 
     expect(violations).toContain(
       'apps/worker/wrangler.toml: env.production interaction watches require release approval and verified staging smoke',
+    );
+    expect(violations).toContain(
+      'apps/worker/wrangler.toml: env.production interaction watches must be isolated from every X-write release',
+    );
+    expect(violations).toContain(
+      'apps/worker/wrangler.toml: env.production interaction watches require an explicit privacy review id',
     );
   });
 

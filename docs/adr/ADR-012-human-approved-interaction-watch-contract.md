@@ -25,8 +25,9 @@ of `XInteractionWatchPublishingAdapter` exists.
 
 A future implementation must satisfy all of these conditions:
 
-1. Exactly one active watch is permitted. Registration accepts one numeric user
-   ID and verifies its username against X before persistence.
+1. Exactly one active watch is permitted. Registration accepts one username,
+   resolves it to a numeric user ID through X, and verifies the returned
+   username before persistence.
 2. Polling uses a read-only adapter, advances from a durable cursor, excludes
    replies and Reposts, stores no post body, and only creates pending candidates.
 3. A named operator opens the exact X post and individually confirms the
@@ -41,8 +42,10 @@ A future implementation must satisfy all of these conditions:
 6. Every mutation is append-only audited without post bodies, credentials,
    personal information, or approval proof contents.
 7. Emergency stop is fail-closed. The feature has its own default-disabled
-   production flag, staging fake smoke evidence, release approval, and rate
-   policy in addition to the existing named-human gates.
+   production flag, fresh-D1 staging fake smoke evidence, release approval,
+   privacy-review reference, and rate policy. Its release is mutually exclusive
+   with every X-write release and uses a dedicated application-only read Bearer
+   Token rather than any User Context write credential.
 8. Production release requires a fresh review of X's current Automation Rules.
    If individually initiated Likes are no longer permitted, the Like portion is
    removed rather than bypassed.

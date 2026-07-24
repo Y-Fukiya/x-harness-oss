@@ -64,17 +64,17 @@ try {
   if (!existing.response.ok || !Array.isArray(existing.body?.data)) {
     throw new Error(`Watch list failed with HTTP ${existing.response.status}`);
   }
-  let watch = existing.body.data[0];
-  if (!watch) {
-    const created = await request('/api/cubelic/interaction-watches', {
-      method: 'POST',
-      body: JSON.stringify({ targetUsername: 'x_harness_watch_smoke' }),
-    });
-    if (created.response.status !== 201) {
-      throw new Error(`Watch registration failed with HTTP ${created.response.status}`);
-    }
-    watch = created.body?.data;
+  if (existing.body.data.length !== 0) {
+    throw new Error('Watch smoke requires a fresh dedicated staging D1 database.');
   }
+  const created = await request('/api/cubelic/interaction-watches', {
+    method: 'POST',
+    body: JSON.stringify({ targetUsername: 'x_harness_watch_smoke' }),
+  });
+  if (created.response.status !== 201) {
+    throw new Error(`Watch registration failed with HTTP ${created.response.status}`);
+  }
+  const watch = created.body?.data;
   if (
     watch?.targetUsername !== 'x_harness_watch_smoke'
     || watch?.targetUserId !== '9900000000000000100'
@@ -86,7 +86,7 @@ try {
     `/api/cubelic/interaction-watches/${encodeURIComponent(watch.watchId)}/poll`,
     { method: 'POST', body: '{}' },
   );
-  if (!firstPoll.response.ok || ![0, 1].includes(firstPoll.body?.data?.discovered)) {
+  if (!firstPoll.response.ok || firstPoll.body?.data?.discovered !== 1) {
     throw new Error(`First watch poll failed with HTTP ${firstPoll.response.status}`);
   }
   const secondPoll = await request(
@@ -98,11 +98,33 @@ try {
   }
 
   const candidates = await request('/api/cubelic/interaction-candidates');
-  const matching = candidates.body?.data?.filter(
-    (candidate) => candidate.postId === '9900000000000000101',
-  );
-  if (!candidates.response.ok || matching?.length !== 1) {
+  const candidate = candidates.body?.data?.[0];
+  const candidateKeys = candidate ? Object.keys(candidate).sort() : [];
+  const expectedKeys = [
+    'authorId',
+    'candidateId',
+    'detectedAt',
+    'postCreatedAt',
+    'postId',
+    'status',
+    'watchId',
+  ];
+  if (
+    !candidates.response.ok
+    || candidates.body?.data?.length !== 1
+    || candidate?.postId !== '9900000000000000101'
+    || JSON.stringify(candidateKeys) !== JSON.stringify(expectedKeys)
+  ) {
     throw new Error('Expected exactly one synthetic ID-only candidate.');
+  }
+  const evidence = await request('/api/cubelic/interaction-watch-smoke-evidence');
+  if (
+    !evidence.response.ok
+    || evidence.body?.data?.candidateCount !== 1
+    || evidence.body?.data?.bodyColumnPresent !== false
+    || evidence.body?.data?.xWriteAuditCount !== 0
+  ) {
+    throw new Error('Staging smoke evidence did not prove the read-only boundary.');
   }
 } catch (error) {
   failure = error;

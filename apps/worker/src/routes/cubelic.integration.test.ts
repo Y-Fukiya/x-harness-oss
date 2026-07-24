@@ -95,6 +95,9 @@ describe('CUBΣLIC Worker API integration', () => {
       CREDENTIAL_ENCRYPTION_KEY_VERSION: 'integration-v1',
       INTERACTION_FINGERPRINT_KEY: 'integration-fingerprint-key-with-at-least-32-bytes',
       INTERACTION_FINGERPRINT_KEY_VERSION: 'integration-v1',
+      X_INTERACTION_WATCH_PRIVACY_REVIEW_APPROVED: 'true',
+      X_INTERACTION_WATCH_PRIVACY_REVIEW_ID: 'privacy_review_integration_v1',
+      X_INTERACTION_WATCH_BEARER_TOKEN: 'integration-read-only-bearer-token-with-at-least-32-bytes',
       X_ACCESS_TOKEN: '',
       X_REFRESH_TOKEN: '',
       WORKER_URL: 'https://worker.example.test',
@@ -237,6 +240,14 @@ describe('CUBΣLIC Worker API integration', () => {
           targetUsername: 'approved_target',
         }],
       });
+    const audit = await db.prepare(
+      `SELECT after_json FROM cubelic_audit_logs
+       WHERE action = 'interaction_watch.created'`,
+    ).first<{ after_json: string }>();
+    expect(JSON.parse(audit?.after_json ?? '{}')).toMatchObject({
+      targetIdentityVerified: true,
+      privacyReviewId: 'privacy_review_integration_v1',
+    });
   });
 
   it('queues each newly detected original post once without returning its body', async () => {
@@ -292,6 +303,18 @@ describe('CUBΣLIC Worker API integration', () => {
     expect(serialized).not.toContain('1900000000000000202');
     expect(serialized).not.toContain('1900000000000000203');
     expect(serialized).not.toContain('must not be returned or persisted');
+
+    bindings.ENVIRONMENT = 'staging';
+    bindings.X_INTERACTION_WATCH_SMOKE_MODE = 'true';
+    await expect((await request('/api/cubelic/interaction-watch-smoke-evidence')).json())
+      .resolves.toEqual({
+        success: true,
+        data: {
+          candidateCount: 1,
+          bodyColumnPresent: false,
+          xWriteAuditCount: 0,
+        },
+      });
   });
 
   it('lets Cron detect candidates through a read-only adapter and nothing else', async () => {

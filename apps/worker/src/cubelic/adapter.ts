@@ -85,10 +85,19 @@ function buildXClient(account: {
     : new XClient(account.access_token);
 }
 
-async function configuredXClient(env: Env['Bindings']): Promise<{
-  account: NonNullable<Awaited<ReturnType<typeof getXAccountById>>>;
+function interactionWatchReadClient(env: Env['Bindings']): {
+  accountId: string;
   client: XClient;
-}> {
+} {
+  if (
+    !env.X_INTERACTION_WATCH_BEARER_TOKEN
+    || env.X_INTERACTION_WATCH_BEARER_TOKEN.length < 32
+  ) {
+    throw new PublicationPolicyError(
+      'interaction_watch_read_credential_missing',
+      'A dedicated read-only X credential is required',
+    );
+  }
   const accountId = env.X_HARNESS_ACCOUNT_ID;
   if (!accountId || accountId === 'SET_AFTER_ACCOUNT_SETUP') {
     throw new PublicationPolicyError(
@@ -96,18 +105,10 @@ async function configuredXClient(env: Env['Bindings']): Promise<{
       'X Harness account mapping is not configured',
     );
   }
-  const account = await getXAccountById(
-    env.DB,
+  return {
     accountId,
-    env.CREDENTIAL_ENCRYPTION_KEY,
-  );
-  if (!account) {
-    throw new PublicationPolicyError(
-      'x_account_not_found',
-      'Configured X account was not found',
-    );
-  }
-  return { account, client: buildXClient(account) };
+    client: new XClient(env.X_INTERACTION_WATCH_BEARER_TOKEN),
+  };
 }
 
 export function buildInteractionWatchReadAdapter(
@@ -131,20 +132,34 @@ export function buildInteractionWatchReadAdapter(
         };
       },
       async discoverOriginalPosts() {
-        return [{
-          postId: '9900000000000000101' as XPostId,
-          authorId: '9900000000000000100' as XUserId,
-          createdAt: '2026-07-24T00:00:00.000Z',
-          referencedTypes: [],
-        }];
+        return [
+          {
+            postId: '9900000000000000101' as XPostId,
+            authorId: '9900000000000000100' as XUserId,
+            createdAt: '2026-07-24T00:00:00.000Z',
+            referencedTypes: [],
+          },
+          {
+            postId: '9900000000000000102' as XPostId,
+            authorId: '9900000000000000100' as XUserId,
+            createdAt: '2026-07-24T00:01:00.000Z',
+            referencedTypes: ['replied_to'],
+          },
+          {
+            postId: '9900000000000000103' as XPostId,
+            authorId: '9900000000000000100' as XUserId,
+            createdAt: '2026-07-24T00:02:00.000Z',
+            referencedTypes: ['retweeted'],
+          },
+        ];
       },
     };
   }
   return {
     async verifyTargetUsername(username) {
-      const { account, client } = await configuredXClient(env);
+      const { accountId, client } = interactionWatchReadClient(env);
       const user = await client.getUserByUsername(username);
-      await incrementApiUsage(env.DB, account.id, 'get_user_by_username');
+      await incrementApiUsage(env.DB, accountId, 'get_user_by_username');
       if (user.username.toLowerCase() !== username.toLowerCase()) {
         throw new PublicationPolicyError(
           'interaction_watch_identity_mismatch',
@@ -157,14 +172,14 @@ export function buildInteractionWatchReadAdapter(
       };
     },
     async discoverOriginalPosts({ registration, sincePostId }) {
-      const { account, client } = await configuredXClient(env);
+      const { accountId, client } = interactionWatchReadClient(env);
       const response = await client.getUserTweets(
         registration.targetUserId,
         10,
         undefined,
         sincePostId ?? undefined,
       );
-      await incrementApiUsage(env.DB, account.id, 'get_user_tweets');
+      await incrementApiUsage(env.DB, accountId, 'get_user_tweets');
       return (response.data ?? [])
         .filter((post) => post.author_id === registration.targetUserId)
         .filter((post) => Boolean(post.created_at))

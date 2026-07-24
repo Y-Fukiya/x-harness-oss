@@ -28,7 +28,9 @@ poll original posts through `XInteractionWatchReadAdapter`, persist ID/timestamp
 candidate metadata, and display links for human review. It must never Like,
 Repost, reply, DM, follow, approve, or otherwise write to X. All other Phase 2/3
 behavior may be represented by interfaces or documentation only and must remain
-disabled unless separately approved.
+disabled unless separately approved. The watch requires a dedicated
+application-only read credential and an audited privacy-review reference, and
+must be mutually exclusive with every X-write release.
 
 ## Verification
 

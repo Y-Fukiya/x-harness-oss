@@ -79,9 +79,12 @@ export function validateWranglerBoundaries(wrangler) {
       'X_INTERACTION_WATCH_SMOKE_MODE',
       'X_INTERACTION_WATCH_RELEASE_APPROVED',
       'X_INTERACTION_WATCH_STAGING_SMOKE_VERIFIED',
+      'X_INTERACTION_WATCH_PRIVACY_REVIEW_APPROVED',
+      'X_INTERACTION_WATCH_PRIVACY_REVIEW_ID',
     ].some((key) => Object.hasOwn(values, key));
+    const interactionWatchEnabled = values.X_INTERACTION_WATCH_ENABLED === 'true';
     if (hasInteractionWatchConfig) {
-      if (values.X_INTERACTION_WATCH_ENABLED === 'true') {
+      if (interactionWatchEnabled) {
         const stagingWatchSmoke = environment === 'staging'
           && values.X_INTERACTION_WATCH_SMOKE_MODE === 'true';
         const verifiedWatchRelease = values.X_INTERACTION_WATCH_RELEASE_APPROVED === 'true'
@@ -92,11 +95,27 @@ export function validateWranglerBoundaries(wrangler) {
         if (values.GLOBAL_PUBLISHING_DISABLED !== 'false') {
           violations.push(`${prefix} interaction watches require GLOBAL_PUBLISHING_DISABLED=false`);
         }
+        if (
+          values.CUBELIC_PHASE3_ENABLED === 'true'
+          || values.CUBELIC_HUMAN_INTERACTIONS_ENABLED === 'true'
+        ) {
+          violations.push(`${prefix} interaction watches must be isolated from every X-write release`);
+        }
+        if (
+          values.X_INTERACTION_WATCH_PRIVACY_REVIEW_APPROVED !== 'true'
+          || !/^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/.test(
+            values.X_INTERACTION_WATCH_PRIVACY_REVIEW_ID ?? '',
+          )
+        ) {
+          violations.push(`${prefix} interaction watches require an explicit privacy review id`);
+        }
       } else if (
         values.X_INTERACTION_WATCH_ENABLED !== 'false'
         || values.X_INTERACTION_WATCH_SMOKE_MODE !== 'false'
         || values.X_INTERACTION_WATCH_RELEASE_APPROVED !== 'false'
         || values.X_INTERACTION_WATCH_STAGING_SMOKE_VERIFIED !== 'false'
+        || values.X_INTERACTION_WATCH_PRIVACY_REVIEW_APPROVED !== 'false'
+        || values.X_INTERACTION_WATCH_PRIVACY_REVIEW_ID !== ''
       ) {
         violations.push(`${prefix} disabled interaction watches must keep all watch gates false`);
       }
@@ -163,7 +182,7 @@ export function validateWranglerBoundaries(wrangler) {
       if (values.CUBELIC_PHASE3_ENABLED !== 'false') {
         violations.push(`${prefix} must set CUBELIC_PHASE3_ENABLED to true or false exactly`);
       }
-      if (values.GLOBAL_PUBLISHING_DISABLED !== 'true') {
+      if (!interactionWatchEnabled && values.GLOBAL_PUBLISHING_DISABLED !== 'true') {
         violations.push(`${prefix} Phase 1 requires GLOBAL_PUBLISHING_DISABLED=true`);
       }
       if (values.CUBELIC_PHASE3_MEDIA_ENABLED !== 'false') {

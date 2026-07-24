@@ -1,5 +1,6 @@
 import type {
   InteractionWatchRegistration,
+  InteractionCandidateId,
   XInteractionWatchReadAdapter,
   XOperatorId,
   XPostId,
@@ -55,7 +56,7 @@ export async function pollInteractionWatch(
   );
   let discovered = 0;
   for (const post of originals) {
-    const candidateId = `candidate_${crypto.randomUUID()}`;
+    const candidateId = `candidate_${crypto.randomUUID()}` as InteractionCandidateId;
     if (await createInteractionCandidate(env.DB, {
       candidateId,
       watchId: watch.watchId,

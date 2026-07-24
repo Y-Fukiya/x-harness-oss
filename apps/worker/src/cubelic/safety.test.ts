@@ -123,23 +123,40 @@ describe('CUBΣLIC centralized Phase 1 route boundary', () => {
   });
 
   it('keeps read-only watches behind dedicated staging or release gates', () => {
+    const privacyReview = {
+      X_INTERACTION_WATCH_PRIVACY_REVIEW_APPROVED: 'true',
+      X_INTERACTION_WATCH_PRIVACY_REVIEW_ID: 'privacy_review_test_v1',
+    } as const;
     expect(isInteractionWatchEnabled(env({
       X_INTERACTION_WATCH_ENABLED: 'true',
+      ...privacyReview,
     }))).toBe(false);
     expect(isInteractionWatchEnabled(env({
       ENVIRONMENT: 'staging',
       X_INTERACTION_WATCH_ENABLED: 'true',
       X_INTERACTION_WATCH_SMOKE_MODE: 'true',
+      ...privacyReview,
     }))).toBe(true);
     expect(isInteractionWatchEnabled(env({
       ENVIRONMENT: 'production',
       X_INTERACTION_WATCH_ENABLED: 'true',
       X_INTERACTION_WATCH_SMOKE_MODE: 'true',
+      ...privacyReview,
     }))).toBe(false);
     expect(isInteractionWatchEnabled(env({
       X_INTERACTION_WATCH_ENABLED: 'true',
       X_INTERACTION_WATCH_RELEASE_APPROVED: 'true',
       X_INTERACTION_WATCH_STAGING_SMOKE_VERIFIED: 'true',
+      X_INTERACTION_WATCH_BEARER_TOKEN: 'read-only-bearer-token-with-at-least-32-bytes',
+      ...privacyReview,
     }))).toBe(true);
+    expect(isInteractionWatchEnabled(env({
+      CUBELIC_PHASE3_ENABLED: 'true',
+      X_INTERACTION_WATCH_ENABLED: 'true',
+      X_INTERACTION_WATCH_RELEASE_APPROVED: 'true',
+      X_INTERACTION_WATCH_STAGING_SMOKE_VERIFIED: 'true',
+      X_INTERACTION_WATCH_BEARER_TOKEN: 'read-only-bearer-token-with-at-least-32-bytes',
+      ...privacyReview,
+    }))).toBe(false);
   });
 });

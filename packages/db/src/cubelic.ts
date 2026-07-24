@@ -12,6 +12,11 @@ import type {
   XDraftInput,
   XDraftResult,
   XHarnessInertDraftV1,
+  InteractionCandidateId,
+  InteractionWatchId,
+  XOperatorId,
+  XPostId,
+  XUserId,
 } from '@x-harness/content-os';
 import { isValidCalendarDateTime } from '@x-harness/content-os';
 
@@ -97,14 +102,14 @@ export async function appendCubelicAudit(db: D1Database, input: AuditInput): Pro
 }
 
 export interface InteractionWatchRecord {
-  watchId: string;
-  targetUserId: string;
+  watchId: InteractionWatchId;
+  targetUserId: XUserId;
   targetUsername: string;
   verifiedAt: string;
   status: 'active' | 'paused';
-  lastSeenPostId: string | null;
+  lastSeenPostId: XPostId | null;
   lastPolledAt: string | null;
-  createdBy: string;
+  createdBy: XOperatorId;
   createdAt: string;
   updatedAt: string;
 }
@@ -124,14 +129,14 @@ interface InteractionWatchRow {
 
 function interactionWatchFromRow(row: InteractionWatchRow): InteractionWatchRecord {
   return {
-    watchId: row.watch_id,
-    targetUserId: row.target_user_id,
+    watchId: row.watch_id as InteractionWatchId,
+    targetUserId: row.target_user_id as XUserId,
     targetUsername: row.target_username,
     verifiedAt: row.verified_at,
     status: row.status,
-    lastSeenPostId: row.last_seen_post_id,
+    lastSeenPostId: row.last_seen_post_id as XPostId | null,
     lastPolledAt: row.last_polled_at,
-    createdBy: row.created_by,
+    createdBy: row.created_by as XOperatorId,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -140,11 +145,11 @@ function interactionWatchFromRow(row: InteractionWatchRow): InteractionWatchReco
 export async function createInteractionWatch(
   db: D1Database,
   input: {
-    watchId: string;
-    targetUserId: string;
+    watchId: InteractionWatchId;
+    targetUserId: XUserId;
     targetUsername: string;
     verifiedAt: string;
-    createdBy: string;
+    createdBy: XOperatorId;
   },
   audit: AuditInput,
 ): Promise<InteractionWatchRecord> {
@@ -192,7 +197,7 @@ export async function listInteractionWatches(
 
 export async function getInteractionWatch(
   db: D1Database,
-  watchId: string,
+  watchId: InteractionWatchId,
 ): Promise<InteractionWatchRecord | null> {
   const row = await db.prepare(
     `SELECT watch_id, target_user_id, target_username, verified_at, status,
@@ -204,8 +209,8 @@ export async function getInteractionWatch(
 
 export async function updateInteractionWatchCursor(
   db: D1Database,
-  watchId: string,
-  lastSeenPostId: string,
+  watchId: InteractionWatchId,
+  lastSeenPostId: XPostId,
   audit: AuditInput,
 ): Promise<void> {
   await runCubelicMutation(db, [
@@ -219,7 +224,7 @@ export async function updateInteractionWatchCursor(
 
 export async function markInteractionWatchPolled(
   db: D1Database,
-  watchId: string,
+  watchId: InteractionWatchId,
   polledAt: string,
   audit: AuditInput,
 ): Promise<void> {
@@ -233,10 +238,10 @@ export async function markInteractionWatchPolled(
 }
 
 export interface InteractionCandidateRecord {
-  candidateId: string;
-  watchId: string;
-  postId: string;
-  authorId: string;
+  candidateId: InteractionCandidateId;
+  watchId: InteractionWatchId;
+  postId: XPostId;
+  authorId: XUserId;
   postCreatedAt: string;
   status: 'pending';
   detectedAt: string;
@@ -256,10 +261,10 @@ function interactionCandidateFromRow(
   row: InteractionCandidateRow,
 ): InteractionCandidateRecord {
   return {
-    candidateId: row.candidate_id,
-    watchId: row.watch_id,
-    postId: row.post_id,
-    authorId: row.author_id,
+    candidateId: row.candidate_id as InteractionCandidateId,
+    watchId: row.watch_id as InteractionWatchId,
+    postId: row.post_id as XPostId,
+    authorId: row.author_id as XUserId,
     postCreatedAt: row.post_created_at,
     status: row.status,
     detectedAt: row.detected_at,
@@ -269,10 +274,10 @@ function interactionCandidateFromRow(
 export async function createInteractionCandidate(
   db: D1Database,
   input: {
-    candidateId: string;
-    watchId: string;
-    postId: string;
-    authorId: string;
+    candidateId: InteractionCandidateId;
+    watchId: InteractionWatchId;
+    postId: XPostId;
+    authorId: XUserId;
     postCreatedAt: string;
   },
   audit: AuditInput,

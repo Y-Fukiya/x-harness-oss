@@ -20,7 +20,9 @@ import {
   type EventRecord,
   type HumanXInteractionInput,
   type HumanXInteractionApprovalRequest,
+  type InteractionWatchId,
   type RejectReason,
+  type XOperatorId,
 } from '@x-harness/content-os';
 import {
   appendCubelicAudit,
@@ -888,14 +890,14 @@ cubelic.post('/api/cubelic/interaction-watches', async (c) => {
     const reader = c.get('interactionWatchReadAdapter')
       ?? buildInteractionWatchReadAdapter(c.env);
     const verified = await reader.verifyTargetUsername(body.targetUsername);
-    const watchId = `watch_${crypto.randomUUID()}`;
+    const watchId = `watch_${crypto.randomUUID()}` as InteractionWatchId;
     const verifiedAt = new Date().toISOString();
     const watch = await createInteractionWatch(c.env.DB, {
       watchId,
       targetUserId: verified.targetUserId,
       targetUsername: verified.verifiedUsername,
       verifiedAt,
-      createdBy: namedHumanId(c),
+      createdBy: namedHumanId(c) as XOperatorId,
     }, {
       actor: 'human',
       action: 'interaction_watch.created',
@@ -905,6 +907,7 @@ cubelic.post('/api/cubelic/interaction-watches', async (c) => {
       after: {
         status: 'active',
         targetIdentityVerified: true,
+        privacyReviewId: c.env.X_INTERACTION_WATCH_PRIVACY_REVIEW_ID,
       },
       correlationId: correlationId(c),
     });
@@ -931,7 +934,10 @@ cubelic.post('/api/cubelic/interaction-watches/:id/poll', async (c) => {
         'A valid interaction watch id is required',
       );
     }
-    const watch = await getInteractionWatch(c.env.DB, watchId);
+    const watch = await getInteractionWatch(
+      c.env.DB,
+      watchId as InteractionWatchId,
+    );
     if (!watch || watch.status !== 'active') {
       return c.json({
         success: false,
@@ -964,6 +970,37 @@ cubelic.get('/api/cubelic/interaction-candidates', async (c) => {
   return c.json({
     success: true,
     data: await listInteractionCandidates(c.env.DB),
+  });
+});
+
+cubelic.get('/api/cubelic/interaction-watch-smoke-evidence', async (c) => {
+  if (
+    c.env.ENVIRONMENT !== 'staging'
+    || c.env.X_INTERACTION_WATCH_SMOKE_MODE !== 'true'
+    || c.get('staffRole') !== 'admin'
+  ) {
+    return c.json({ success: false, error: 'Not found' }, 404);
+  }
+  const [columns, candidateCount, xWriteAuditCount] = await Promise.all([
+    c.env.DB.prepare('PRAGMA table_info(x_interaction_candidates)')
+      .all<{ name: string }>(),
+    c.env.DB.prepare('SELECT COUNT(*) AS count FROM x_interaction_candidates')
+      .first<{ count: number }>(),
+    c.env.DB.prepare(
+      `SELECT COUNT(*) AS count FROM cubelic_audit_logs
+       WHERE action LIKE 'publication.%' OR action LIKE 'interaction.%'`,
+    ).first<{ count: number }>(),
+  ]);
+  const bodyColumnPresent = columns.results.some(
+    (column) => column.name === 'body' || column.name === 'text',
+  );
+  return c.json({
+    success: true,
+    data: {
+      candidateCount: candidateCount?.count ?? 0,
+      bodyColumnPresent,
+      xWriteAuditCount: xWriteAuditCount?.count ?? 0,
+    },
   });
 });
 

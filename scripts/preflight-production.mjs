@@ -10,6 +10,7 @@ const cloudflareAuthVerified = process.env.CLOUDFLARE_AUTH_VERIFIED === 'true';
 const phase3Enabled = process.env.CUBELIC_PHASE3_ENABLED === 'true';
 const phase3MediaEnabled = process.env.CUBELIC_PHASE3_MEDIA_ENABLED === 'true';
 const humanInteractionsEnabled = process.env.CUBELIC_HUMAN_INTERACTIONS_ENABLED === 'true';
+const interactionWatchEnabled = process.env.X_INTERACTION_WATCH_ENABLED === 'true';
 const requiredSecrets = [
   'API_KEY',
   'HUMAN_APPROVAL_KEY',
@@ -19,8 +20,31 @@ const requiredSecrets = [
 ];
 if (hermesRuntimeEnabled) requiredSecrets.push('HERMES_ACCESS_TOKEN');
 if (humanInteractionsEnabled) requiredSecrets.push('INTERACTION_FINGERPRINT_KEY');
+if (interactionWatchEnabled) requiredSecrets.push('X_INTERACTION_WATCH_BEARER_TOKEN');
 
-for (const name of ['HERMES_RUNTIME_ENABLED', 'PRODUCTION_CONTENT_INGEST_ENABLED', 'PRODUCTION_INPUTS_VALIDATED', 'PRODUCTION_LP_MAPPING_VALIDATED', 'CLOUDFLARE_AUTH_VERIFIED', 'CUBELIC_PHASE3_ENABLED', 'CUBELIC_PHASE3_MEDIA_ENABLED', 'CUBELIC_PHASE3_MEDIA_SMOKE_MODE', 'CUBELIC_HUMAN_INTERACTIONS_ENABLED', 'CUBELIC_HUMAN_INTERACTIONS_SMOKE_MODE', 'PHASE3_RELEASE_APPROVED', 'STAGING_PHASE3_SMOKE_VERIFIED', 'STAGING_PHASE3_MEDIA_SMOKE_VERIFIED', 'MEDIA_RETENTION_POLICY_VERIFIED', 'HUMAN_INTERACTIONS_RELEASE_APPROVED', 'STAGING_HUMAN_INTERACTIONS_SMOKE_VERIFIED']) {
+for (const name of [
+  'HERMES_RUNTIME_ENABLED',
+  'PRODUCTION_CONTENT_INGEST_ENABLED',
+  'PRODUCTION_INPUTS_VALIDATED',
+  'PRODUCTION_LP_MAPPING_VALIDATED',
+  'CLOUDFLARE_AUTH_VERIFIED',
+  'CUBELIC_PHASE3_ENABLED',
+  'CUBELIC_PHASE3_MEDIA_ENABLED',
+  'CUBELIC_PHASE3_MEDIA_SMOKE_MODE',
+  'CUBELIC_HUMAN_INTERACTIONS_ENABLED',
+  'CUBELIC_HUMAN_INTERACTIONS_SMOKE_MODE',
+  'PHASE3_RELEASE_APPROVED',
+  'STAGING_PHASE3_SMOKE_VERIFIED',
+  'STAGING_PHASE3_MEDIA_SMOKE_VERIFIED',
+  'MEDIA_RETENTION_POLICY_VERIFIED',
+  'HUMAN_INTERACTIONS_RELEASE_APPROVED',
+  'STAGING_HUMAN_INTERACTIONS_SMOKE_VERIFIED',
+  'X_INTERACTION_WATCH_ENABLED',
+  'X_INTERACTION_WATCH_SMOKE_MODE',
+  'X_INTERACTION_WATCH_RELEASE_APPROVED',
+  'X_INTERACTION_WATCH_STAGING_SMOKE_VERIFIED',
+  'X_INTERACTION_WATCH_PRIVACY_REVIEW_APPROVED',
+]) {
   if (process.env[name] && !['true', 'false'].includes(process.env[name])) {
     errors.push(`${name} must be true or false when set`);
   }
@@ -63,6 +87,7 @@ const authorizationSecretNames = [
 ];
 if (hermesRuntimeEnabled) authorizationSecretNames.push('HERMES_ACCESS_TOKEN');
 if (humanInteractionsEnabled) authorizationSecretNames.push('INTERACTION_FINGERPRINT_KEY');
+if (interactionWatchEnabled) authorizationSecretNames.push('X_INTERACTION_WATCH_BEARER_TOKEN');
 const authorizationSecrets = authorizationSecretNames.map((name) => process.env[name]).filter(Boolean);
 if (new Set(authorizationSecrets).size !== authorizationSecrets.length) {
   errors.push(`${authorizationSecretNames.join(', ')} must be distinct`);
@@ -73,6 +98,39 @@ if (!process.env.X_HARNESS_ACCOUNT_ID || process.env.X_HARNESS_ACCOUNT_ID === 'S
 if (process.env.CUBELIC_SAFE_MODE !== 'true') errors.push('CUBELIC_SAFE_MODE must be explicitly true');
 if (process.env.CUBELIC_PHASE3_DELIVERY_MODE !== 'x') {
   errors.push('CUBELIC_PHASE3_DELIVERY_MODE must be x for every production release');
+}
+if (interactionWatchEnabled) {
+  if (phase3Enabled || humanInteractionsEnabled) {
+    errors.push('X interaction watches must be isolated from every X-write release');
+  }
+  if (process.env.GLOBAL_PUBLISHING_DISABLED !== 'false') {
+    errors.push('GLOBAL_PUBLISHING_DISABLED must be explicitly false for an approved interaction-watch release');
+  }
+  if (process.env.X_INTERACTION_WATCH_SMOKE_MODE !== 'false') {
+    errors.push('X_INTERACTION_WATCH_SMOKE_MODE must be false for production');
+  }
+  if (process.env.X_INTERACTION_WATCH_RELEASE_APPROVED !== 'true') {
+    errors.push('X_INTERACTION_WATCH_RELEASE_APPROVED must be true for an interaction-watch release');
+  }
+  if (process.env.X_INTERACTION_WATCH_STAGING_SMOKE_VERIFIED !== 'true') {
+    errors.push('X_INTERACTION_WATCH_STAGING_SMOKE_VERIFIED must be true after a fresh-D1 staging smoke succeeds');
+  }
+  if (process.env.X_INTERACTION_WATCH_PRIVACY_REVIEW_APPROVED !== 'true') {
+    errors.push('X_INTERACTION_WATCH_PRIVACY_REVIEW_APPROVED must be true for an interaction-watch release');
+  }
+  if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/u.test(
+    process.env.X_INTERACTION_WATCH_PRIVACY_REVIEW_ID ?? '',
+  )) {
+    errors.push('X_INTERACTION_WATCH_PRIVACY_REVIEW_ID must contain the explicit privacy review reference');
+  }
+} else if (
+  process.env.X_INTERACTION_WATCH_SMOKE_MODE !== 'false'
+  || process.env.X_INTERACTION_WATCH_RELEASE_APPROVED !== 'false'
+  || process.env.X_INTERACTION_WATCH_STAGING_SMOKE_VERIFIED !== 'false'
+  || process.env.X_INTERACTION_WATCH_PRIVACY_REVIEW_APPROVED !== 'false'
+  || (process.env.X_INTERACTION_WATCH_PRIVACY_REVIEW_ID ?? '') !== ''
+) {
+  errors.push('disabled interaction watches must keep all watch gates false and the privacy review id empty');
 }
 if (phase3Enabled) {
   if (process.env.GLOBAL_PUBLISHING_DISABLED !== 'false') {
@@ -94,7 +152,11 @@ if (phase3Enabled) {
   })) {
     errors.push('CUBELIC_PHASE3_SCHEDULE_POLICIES must contain reviewed category:template_id pairs');
   }
-} else if (!humanInteractionsEnabled && process.env.GLOBAL_PUBLISHING_DISABLED !== 'true') {
+} else if (
+  !humanInteractionsEnabled
+  && !interactionWatchEnabled
+  && process.env.GLOBAL_PUBLISHING_DISABLED !== 'true'
+) {
   errors.push('GLOBAL_PUBLISHING_DISABLED must be explicitly true');
 }
 if (humanInteractionsEnabled && process.env.GLOBAL_PUBLISHING_DISABLED !== 'false') {
@@ -168,6 +230,14 @@ const expectedProductionVars = {
     ? process.env.CUBELIC_PHASE3_SCHEDULE_POLICIES
     : '',
   CUBELIC_HUMAN_INTERACTIONS_ENABLED: humanInteractionsEnabled ? 'true' : 'false',
+  X_INTERACTION_WATCH_ENABLED: interactionWatchEnabled ? 'true' : 'false',
+  X_INTERACTION_WATCH_SMOKE_MODE: 'false',
+  X_INTERACTION_WATCH_RELEASE_APPROVED: interactionWatchEnabled ? 'true' : 'false',
+  X_INTERACTION_WATCH_STAGING_SMOKE_VERIFIED: interactionWatchEnabled ? 'true' : 'false',
+  X_INTERACTION_WATCH_PRIVACY_REVIEW_APPROVED: interactionWatchEnabled ? 'true' : 'false',
+  X_INTERACTION_WATCH_PRIVACY_REVIEW_ID: interactionWatchEnabled
+    ? process.env.X_INTERACTION_WATCH_PRIVACY_REVIEW_ID
+    : '',
   PHASE3_RELEASE_APPROVED: phase3Enabled ? 'true' : 'false',
   STAGING_PHASE3_SMOKE_VERIFIED: phase3Enabled ? 'true' : 'false',
   STAGING_PHASE3_MEDIA_SMOKE_VERIFIED: phase3MediaEnabled ? 'true' : 'false',
@@ -175,7 +245,9 @@ const expectedProductionVars = {
   HUMAN_INTERACTIONS_RELEASE_APPROVED: humanInteractionsEnabled ? 'true' : 'false',
   STAGING_HUMAN_INTERACTIONS_SMOKE_VERIFIED: humanInteractionsEnabled ? 'true' : 'false',
   CUBELIC_HUMAN_INTERACTIONS_SMOKE_MODE: 'false',
-  GLOBAL_PUBLISHING_DISABLED: phase3Enabled || humanInteractionsEnabled ? 'false' : 'true',
+  GLOBAL_PUBLISHING_DISABLED: phase3Enabled || humanInteractionsEnabled || interactionWatchEnabled
+    ? 'false'
+    : 'true',
 };
 for (const [name, expected] of Object.entries(expectedProductionVars)) {
   if (productionVar(name) !== expected) {
@@ -188,7 +260,11 @@ if (errors.length) {
   console.error('No secret values were printed. Resolve the named inputs, then rerun pnpm preflight:production.');
   process.exitCode = 1;
 } else {
-  console.log(phase3Enabled
-    ? 'Production preflight passed for the approved Phase 3 publication capability. Run the Phase 3 staging checklist before deployment.'
-    : 'Production preflight passed for the Phase 1 runtime. Run the staging checklist before any production deployment.');
+  if (interactionWatchEnabled) {
+    console.log('Production preflight passed for the approved read-only interaction-watch capability. Run the dedicated staging checklist before deployment.');
+  } else if (phase3Enabled) {
+    console.log('Production preflight passed for the approved Phase 3 publication capability. Run the Phase 3 staging checklist before deployment.');
+  } else {
+    console.log('Production preflight passed for the Phase 1 runtime. Run the staging checklist before any production deployment.');
+  }
 }

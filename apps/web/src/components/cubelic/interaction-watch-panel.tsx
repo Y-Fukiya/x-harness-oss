@@ -92,7 +92,7 @@ export default function InteractionWatchPanel({
           <div>
             <p className="font-semibold text-gray-900">@{watch.targetUsername}</p>
             <p className="text-xs text-gray-500">
-              ID {watch.targetUserId}・照合 {new Date(watch.verifiedAt).toLocaleString('ja-JP')}
+              ID {watch.targetUserId}・照合 {new Date(watch.verifiedAt).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })}
             </p>
           </div>
           <button
@@ -121,7 +121,7 @@ export default function InteractionWatchPanel({
             <div>
               <p className="text-sm font-semibold text-gray-900">投稿 {candidate.postId}</p>
               <p className="text-xs text-gray-500">
-                投稿日時 {new Date(candidate.postCreatedAt).toLocaleString('ja-JP')}
+                投稿日時 {new Date(candidate.postCreatedAt).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })}
               </p>
             </div>
             <a

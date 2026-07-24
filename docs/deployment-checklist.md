@@ -137,13 +137,19 @@ write release.
 2. Keep `X_INTERACTION_WATCH_ENABLED=false`,
    `X_INTERACTION_WATCH_SMOKE_MODE=false`,
    `X_INTERACTION_WATCH_RELEASE_APPROVED=false`, and
-   `X_INTERACTION_WATCH_STAGING_SMOKE_VERIFIED=false` in committed configuration.
+   `X_INTERACTION_WATCH_STAGING_SMOKE_VERIFIED=false`,
+   `X_INTERACTION_WATCH_PRIVACY_REVIEW_APPROVED=false`, and an empty
+   `X_INTERACTION_WATCH_PRIVACY_REVIEW_ID` in committed configuration.
 3. For the dedicated staging smoke only, enable the watch flag and staging smoke
-   mode, resume the D1 stop with a named operator, register one synthetic target,
-   poll twice, and verify exactly one ID-only candidate. Verify replies and
-   Reposts are excluded and no post body or X-write audit exists.
+   mode on a fresh dedicated staging D1, disable every X-write capability,
+   record the privacy-review ID, resume the D1 stop with a named operator,
+   register one synthetic target, poll twice, and require first poll=1 and
+   second poll=0. Verify replies and Reposts are excluded and no post body or
+   X-write audit exists.
 4. Restore the D1 stop and disable smoke mode before recording
    `X_INTERACTION_WATCH_STAGING_SMOKE_VERIFIED=true`.
 5. Production requires a separate `X_INTERACTION_WATCH_RELEASE_APPROVED=true`,
-   the recorded staging evidence, migration 029, and a named operator. Production
-   must keep smoke mode false.
+   the recorded staging evidence, migration 029, an approved privacy-review ID,
+   a dedicated application-only read Bearer Token supplied as the
+   `X_INTERACTION_WATCH_BEARER_TOKEN` secret, and a named operator. Production
+   must keep smoke mode false and every X-write release disabled.
