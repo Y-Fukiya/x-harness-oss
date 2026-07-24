@@ -24,7 +24,10 @@ import { growth } from './routes/growth.js';
 import { growthSources } from './routes/growth-sources.js';
 import { growthArticles } from './routes/growth-articles.js';
 import { cubelic } from './routes/cubelic.js';
-import { cubelicPhase1RouteGuard } from './cubelic/safety.js';
+import {
+  cubelicPhase1RouteGuard,
+  isInteractionWatchEnabled,
+} from './cubelic/safety.js';
 import { resolveCorsOrigin } from './cubelic/cors.js';
 import type {
   CubelicHumanInteractionAdapterFactory,
@@ -81,6 +84,7 @@ export type Env = {
     X_INTERACTION_WATCH_STAGING_SMOKE_VERIFIED?: string;
     X_INTERACTION_WATCH_PRIVACY_REVIEW_APPROVED?: string;
     X_INTERACTION_WATCH_PRIVACY_REVIEW_ID?: string;
+    X_INTERACTION_WATCH_REVIEWED_TARGET_USER_ID?: string;
     X_INTERACTION_WATCH_BEARER_TOKEN?: string;
     GLOBAL_PUBLISHING_DISABLED?: string;
     HUMAN_APPROVAL_KEY?: string;
@@ -170,13 +174,16 @@ async function scheduled(
   env: Env['Bindings'],
   _ctx: ExecutionContext,
 ): Promise<void> {
+  if (isInteractionWatchEnabled(env)) {
+    await processInteractionWatches(env);
+    return;
+  }
   await verifyOrInitializeCredentialKeyState(
     env.DB,
     env.CREDENTIAL_ENCRYPTION_KEY,
     env.CREDENTIAL_ENCRYPTION_KEY_VERSION,
   );
   await processDueCubelicPublications(env);
-  await processInteractionWatches(env);
 }
 
 export default {

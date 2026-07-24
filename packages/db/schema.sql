@@ -806,6 +806,8 @@ CREATE TABLE IF NOT EXISTS x_interaction_watches (
     )
   ),
   last_polled_at TEXT,
+  poll_day_utc TEXT,
+  poll_count INTEGER NOT NULL DEFAULT 0 CHECK (poll_count BETWEEN 0 AND 96),
   created_by TEXT NOT NULL,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL

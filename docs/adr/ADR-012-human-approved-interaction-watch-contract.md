@@ -27,7 +27,7 @@ A future implementation must satisfy all of these conditions:
 
 1. Exactly one active watch is permitted. Registration accepts one username,
    resolves it to a numeric user ID through X, and verifies the returned
-   username before persistence.
+   username and privacy-reviewed numeric user ID before persistence.
 2. Polling uses a read-only adapter, advances from a durable cursor, excludes
    replies and Reposts, stores no post body, and only creates pending candidates.
 3. A named operator opens the exact X post and individually confirms the
@@ -45,7 +45,11 @@ A future implementation must satisfy all of these conditions:
    production flag, fresh-D1 staging fake smoke evidence, release approval,
    privacy-review reference, and rate policy. Its release is mutually exclusive
    with every X-write release and uses a dedicated application-only read Bearer
-   Token rather than any User Context write credential.
+   Token rather than any User Context write credential. Registration and every
+   poll reject a token that authenticates `/2/users/me`, and reject an
+   indeterminate credential check. Normal manual and Cron polls share a
+   15-minute minimum interval and 96-per-UTC-day D1 limit; only fresh-D1 staging
+   smoke may bypass the interval.
 8. Production release requires a fresh review of X's current Automation Rules.
    If individually initiated Likes are no longer permitted, the Like portion is
    removed rather than bypassed.

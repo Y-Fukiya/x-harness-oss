@@ -72,6 +72,9 @@ export function isInteractionWatchEnabled(env: Env['Bindings']): boolean {
   const privacyReviewed = env.X_INTERACTION_WATCH_PRIVACY_REVIEW_APPROVED === 'true'
     && /^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/.test(
       env.X_INTERACTION_WATCH_PRIVACY_REVIEW_ID ?? '',
+    )
+    && /^[1-9][0-9]{4,29}$/.test(
+      env.X_INTERACTION_WATCH_REVIEWED_TARGET_USER_ID ?? '',
     );
   const readCredentialReady = stagingSmokeMode
     || (env.X_INTERACTION_WATCH_BEARER_TOKEN?.length ?? 0) >= 32;
@@ -81,6 +84,14 @@ export function isInteractionWatchEnabled(env: Env['Bindings']): boolean {
     && privacyReviewed
     && readCredentialReady
     && (stagingSmokeMode || verifiedRelease);
+}
+
+export function isInteractionWatchTargetApproved(
+  env: Env['Bindings'],
+  targetUserId: string,
+): boolean {
+  return /^[1-9][0-9]{4,29}$/.test(targetUserId)
+    && env.X_INTERACTION_WATCH_REVIEWED_TARGET_USER_ID === targetUserId;
 }
 
 export function isPhase1RouteBlocked(method: string, path: string, env: Env['Bindings']): boolean {

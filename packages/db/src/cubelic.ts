@@ -109,6 +109,8 @@ export interface InteractionWatchRecord {
   status: 'active' | 'paused';
   lastSeenPostId: XPostId | null;
   lastPolledAt: string | null;
+  pollDayUtc: string | null;
+  pollCount: number;
   createdBy: XOperatorId;
   createdAt: string;
   updatedAt: string;
@@ -122,6 +124,8 @@ interface InteractionWatchRow {
   status: InteractionWatchRecord['status'];
   last_seen_post_id: string | null;
   last_polled_at: string | null;
+  poll_day_utc: string | null;
+  poll_count: number;
   created_by: string;
   created_at: string;
   updated_at: string;
@@ -136,6 +140,8 @@ function interactionWatchFromRow(row: InteractionWatchRow): InteractionWatchReco
     status: row.status,
     lastSeenPostId: row.last_seen_post_id as XPostId | null,
     lastPolledAt: row.last_polled_at,
+    pollDayUtc: row.poll_day_utc,
+    pollCount: row.poll_count,
     createdBy: row.created_by as XOperatorId,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -158,8 +164,9 @@ export async function createInteractionWatch(
     db.prepare(
       `INSERT INTO x_interaction_watches (
         watch_id, singleton_key, target_user_id, target_username, verified_at,
-        status, last_seen_post_id, last_polled_at, created_by, created_at, updated_at
-      ) VALUES (?, 1, ?, ?, ?, 'active', NULL, NULL, ?, ?, ?)`,
+        status, last_seen_post_id, last_polled_at, poll_day_utc, poll_count,
+        created_by, created_at, updated_at
+      ) VALUES (?, 1, ?, ?, ?, 'active', NULL, NULL, NULL, 0, ?, ?, ?)`,
     ).bind(
       input.watchId,
       input.targetUserId,
@@ -178,6 +185,8 @@ export async function createInteractionWatch(
     status: 'active',
     lastSeenPostId: null,
     lastPolledAt: null,
+    pollDayUtc: null,
+    pollCount: 0,
     createdBy: input.createdBy,
     createdAt: timestamp,
     updatedAt: timestamp,
@@ -189,7 +198,8 @@ export async function listInteractionWatches(
 ): Promise<InteractionWatchRecord[]> {
   const rows = await db.prepare(
     `SELECT watch_id, target_user_id, target_username, verified_at, status,
-      last_seen_post_id, last_polled_at, created_by, created_at, updated_at
+      last_seen_post_id, last_polled_at, poll_day_utc, poll_count,
+      created_by, created_at, updated_at
      FROM x_interaction_watches ORDER BY created_at ASC`,
   ).all<InteractionWatchRow>();
   return rows.results.map(interactionWatchFromRow);
@@ -201,7 +211,8 @@ export async function getInteractionWatch(
 ): Promise<InteractionWatchRecord | null> {
   const row = await db.prepare(
     `SELECT watch_id, target_user_id, target_username, verified_at, status,
-      last_seen_post_id, last_polled_at, created_by, created_at, updated_at
+      last_seen_post_id, last_polled_at, poll_day_utc, poll_count,
+      created_by, created_at, updated_at
      FROM x_interaction_watches WHERE watch_id = ?`,
   ).bind(watchId).first<InteractionWatchRow>();
   return row ? interactionWatchFromRow(row) : null;
@@ -222,19 +233,39 @@ export async function updateInteractionWatchCursor(
   ], [audit]);
 }
 
-export async function markInteractionWatchPolled(
+export async function reserveInteractionWatchPoll(
   db: D1Database,
   watchId: InteractionWatchId,
   polledAt: string,
+  allowRapidStagingSmoke: boolean,
   audit: AuditInput,
-): Promise<void> {
-  await runCubelicMutation(db, [
+): Promise<boolean> {
+  const instant = new Date(polledAt);
+  const dayUtc = polledAt.slice(0, 10);
+  const minimumAllowed = new Date(instant.getTime() - 15 * 60_000).toISOString();
+  const [reservation] = await db.batch([
     db.prepare(
       `UPDATE x_interaction_watches
-       SET last_polled_at = ?, updated_at = ?
-       WHERE watch_id = ?`,
-    ).bind(polledAt, polledAt, watchId),
-  ], [audit]);
+       SET last_polled_at = ?,
+           poll_day_utc = ?,
+           poll_count = CASE WHEN poll_day_utc = ? THEN poll_count + 1 ELSE 1 END,
+           updated_at = ?
+       WHERE watch_id = ?
+         AND (? = 1 OR last_polled_at IS NULL OR last_polled_at <= ?)
+         AND (poll_day_utc IS NULL OR poll_day_utc <> ? OR poll_count < 96)`,
+    ).bind(
+      polledAt,
+      dayUtc,
+      dayUtc,
+      polledAt,
+      watchId,
+      allowRapidStagingSmoke ? 1 : 0,
+      minimumAllowed,
+      dayUtc,
+    ),
+    cubelicAuditStatement(db, audit, polledAt),
+  ]);
+  return (reservation.meta.changes ?? 0) === 1;
 }
 
 export interface InteractionCandidateRecord {

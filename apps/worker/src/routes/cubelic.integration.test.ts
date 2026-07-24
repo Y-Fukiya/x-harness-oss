@@ -97,6 +97,7 @@ describe('CUBΣLIC Worker API integration', () => {
       INTERACTION_FINGERPRINT_KEY_VERSION: 'integration-v1',
       X_INTERACTION_WATCH_PRIVACY_REVIEW_APPROVED: 'true',
       X_INTERACTION_WATCH_PRIVACY_REVIEW_ID: 'privacy_review_integration_v1',
+      X_INTERACTION_WATCH_REVIEWED_TARGET_USER_ID: '1900000000000000100',
       X_INTERACTION_WATCH_BEARER_TOKEN: 'integration-read-only-bearer-token-with-at-least-32-bytes',
       X_ACCESS_TOKEN: '',
       X_REFRESH_TOKEN: '',
@@ -222,6 +223,14 @@ describe('CUBΣLIC Worker API integration', () => {
       body: JSON.stringify({ targetUsername: 'approved_target' }),
     });
 
+    bindings.X_INTERACTION_WATCH_REVIEWED_TARGET_USER_ID = '1900000000000000999';
+    const mismatchedReview = await create();
+    expect(mismatchedReview.status).toBe(422);
+    await expect(mismatchedReview.json()).resolves.toMatchObject({
+      code: 'interaction_watch_target_not_reviewed',
+    });
+    bindings.X_INTERACTION_WATCH_REVIEWED_TARGET_USER_ID = '1900000000000000100';
+
     const created = await create();
     expect(created.status).toBe(201);
     await expect(created.json()).resolves.toMatchObject({
@@ -246,12 +255,15 @@ describe('CUBΣLIC Worker API integration', () => {
     ).first<{ after_json: string }>();
     expect(JSON.parse(audit?.after_json ?? '{}')).toMatchObject({
       targetIdentityVerified: true,
+      privacyReviewedTargetMatched: true,
       privacyReviewId: 'privacy_review_integration_v1',
     });
   });
 
   it('queues each newly detected original post once without returning its body', async () => {
+    bindings.ENVIRONMENT = 'staging';
     bindings.X_INTERACTION_WATCH_ENABLED = 'true';
+    bindings.X_INTERACTION_WATCH_SMOKE_MODE = 'true';
     bindings.X_INTERACTION_WATCH_RELEASE_APPROVED = 'true';
     bindings.X_INTERACTION_WATCH_STAGING_SMOKE_VERIFIED = 'true';
     discoverOriginalPosts.mockResolvedValue([
@@ -304,8 +316,6 @@ describe('CUBΣLIC Worker API integration', () => {
     expect(serialized).not.toContain('1900000000000000203');
     expect(serialized).not.toContain('must not be returned or persisted');
 
-    bindings.ENVIRONMENT = 'staging';
-    bindings.X_INTERACTION_WATCH_SMOKE_MODE = 'true';
     await expect((await request('/api/cubelic/interaction-watch-smoke-evidence')).json())
       .resolves.toEqual({
         success: true,
@@ -315,6 +325,22 @@ describe('CUBΣLIC Worker API integration', () => {
           xWriteAuditCount: 0,
         },
       });
+
+    bindings.ENVIRONMENT = 'production';
+    bindings.X_INTERACTION_WATCH_SMOKE_MODE = 'false';
+    const rateLimited = await request(
+      `/api/cubelic/interaction-watches/${watchId}/poll`,
+      {
+        method: 'POST',
+        headers: {
+          'X-Human-Approval-Key': 'integration-human-key-with-at-least-32-bytes',
+        },
+      },
+    );
+    expect(rateLimited.status).toBe(422);
+    await expect(rateLimited.json()).resolves.toMatchObject({
+      code: 'interaction_watch_rate_limited',
+    });
   });
 
   it('lets Cron detect candidates through a read-only adapter and nothing else', async () => {

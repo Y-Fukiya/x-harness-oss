@@ -496,7 +496,7 @@ export type ApprovedLikeAndRepostResult =
     };
 
 /**
- * Future-milestone read-only contract. A poller receives only this interface
+ * Active read-only monitoring contract. Pollers receive only this interface
  * and therefore cannot publish, approve, Like, or Repost.
  */
 export interface XInteractionWatchReadAdapter {
@@ -509,8 +509,8 @@ export interface XInteractionWatchReadAdapter {
 }
 
 /**
- * Future-milestone delivery contract only. Phase 1 must not provide a runtime
- * implementation, routes, scheduled polling, persistence, or X delivery.
+ * Future X-write delivery contract only. The active read-only milestone must
+ * not provide a runtime implementation or X delivery for this interface.
  */
 export interface XInteractionWatchPublishingAdapter extends XPublishingAdapter {
   executeApprovedLikeAndRepost(

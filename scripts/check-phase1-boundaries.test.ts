@@ -80,6 +80,7 @@ X_INTERACTION_WATCH_RELEASE_APPROVED = "false"
 X_INTERACTION_WATCH_STAGING_SMOKE_VERIFIED = "false"
 X_INTERACTION_WATCH_PRIVACY_REVIEW_APPROVED = "false"
 X_INTERACTION_WATCH_PRIVACY_REVIEW_ID = ""
+X_INTERACTION_WATCH_REVIEWED_TARGET_USER_ID = ""
 GLOBAL_PUBLISHING_DISABLED = "false"
 `);
 
@@ -90,7 +91,7 @@ GLOBAL_PUBLISHING_DISABLED = "false"
       'apps/worker/wrangler.toml: env.production interaction watches must be isolated from every X-write release',
     );
     expect(violations).toContain(
-      'apps/worker/wrangler.toml: env.production interaction watches require an explicit privacy review id',
+      'apps/worker/wrangler.toml: env.production interaction watches require privacy evidence bound to one X user id',
     );
   });
 

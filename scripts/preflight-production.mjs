@@ -123,12 +123,18 @@ if (interactionWatchEnabled) {
   )) {
     errors.push('X_INTERACTION_WATCH_PRIVACY_REVIEW_ID must contain the explicit privacy review reference');
   }
+  if (!/^[1-9][0-9]{4,29}$/u.test(
+    process.env.X_INTERACTION_WATCH_REVIEWED_TARGET_USER_ID ?? '',
+  )) {
+    errors.push('X_INTERACTION_WATCH_REVIEWED_TARGET_USER_ID must bind the privacy review to one numeric X user id');
+  }
 } else if (
   process.env.X_INTERACTION_WATCH_SMOKE_MODE !== 'false'
   || process.env.X_INTERACTION_WATCH_RELEASE_APPROVED !== 'false'
   || process.env.X_INTERACTION_WATCH_STAGING_SMOKE_VERIFIED !== 'false'
   || process.env.X_INTERACTION_WATCH_PRIVACY_REVIEW_APPROVED !== 'false'
   || (process.env.X_INTERACTION_WATCH_PRIVACY_REVIEW_ID ?? '') !== ''
+  || (process.env.X_INTERACTION_WATCH_REVIEWED_TARGET_USER_ID ?? '') !== ''
 ) {
   errors.push('disabled interaction watches must keep all watch gates false and the privacy review id empty');
 }
@@ -237,6 +243,9 @@ const expectedProductionVars = {
   X_INTERACTION_WATCH_PRIVACY_REVIEW_APPROVED: interactionWatchEnabled ? 'true' : 'false',
   X_INTERACTION_WATCH_PRIVACY_REVIEW_ID: interactionWatchEnabled
     ? process.env.X_INTERACTION_WATCH_PRIVACY_REVIEW_ID
+    : '',
+  X_INTERACTION_WATCH_REVIEWED_TARGET_USER_ID: interactionWatchEnabled
+    ? process.env.X_INTERACTION_WATCH_REVIEWED_TARGET_USER_ID
     : '',
   PHASE3_RELEASE_APPROVED: phase3Enabled ? 'true' : 'false',
   STAGING_PHASE3_SMOKE_VERIFIED: phase3Enabled ? 'true' : 'false',

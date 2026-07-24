@@ -126,6 +126,7 @@ describe('CUBΣLIC centralized Phase 1 route boundary', () => {
     const privacyReview = {
       X_INTERACTION_WATCH_PRIVACY_REVIEW_APPROVED: 'true',
       X_INTERACTION_WATCH_PRIVACY_REVIEW_ID: 'privacy_review_test_v1',
+      X_INTERACTION_WATCH_REVIEWED_TARGET_USER_ID: '1900000000000000100',
     } as const;
     expect(isInteractionWatchEnabled(env({
       X_INTERACTION_WATCH_ENABLED: 'true',

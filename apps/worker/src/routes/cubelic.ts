@@ -98,6 +98,7 @@ import { MEDIA_SIZE_LIMITS, writeMediaBodyToR2 } from '../cubelic/media-delivery
 import { pollInteractionWatch } from '../cubelic/interaction-watch.js';
 import {
   isInteractionWatchEnabled,
+  isInteractionWatchTargetApproved,
   isNamedHumanInteractionEnabled,
   isPhase3MediaDeliveryEnabled,
   isPhase3PublicationEnabled,
@@ -890,6 +891,12 @@ cubelic.post('/api/cubelic/interaction-watches', async (c) => {
     const reader = c.get('interactionWatchReadAdapter')
       ?? buildInteractionWatchReadAdapter(c.env);
     const verified = await reader.verifyTargetUsername(body.targetUsername);
+    if (!isInteractionWatchTargetApproved(c.env, verified.targetUserId)) {
+      throw new PublicationPolicyError(
+        'interaction_watch_target_not_reviewed',
+        'The resolved X user ID does not match the privacy-reviewed target',
+      );
+    }
     const watchId = `watch_${crypto.randomUUID()}` as InteractionWatchId;
     const verifiedAt = new Date().toISOString();
     const watch = await createInteractionWatch(c.env.DB, {
@@ -907,6 +914,7 @@ cubelic.post('/api/cubelic/interaction-watches', async (c) => {
       after: {
         status: 'active',
         targetIdentityVerified: true,
+        privacyReviewedTargetMatched: true,
         privacyReviewId: c.env.X_INTERACTION_WATCH_PRIVACY_REVIEW_ID,
       },
       correlationId: correlationId(c),
@@ -944,6 +952,12 @@ cubelic.post('/api/cubelic/interaction-watches/:id/poll', async (c) => {
         error: 'Active interaction watch not found',
         code: 'interaction_watch_not_found',
       }, 404);
+    }
+    if (!isInteractionWatchTargetApproved(c.env, watch.targetUserId)) {
+      throw new PublicationPolicyError(
+        'interaction_watch_target_not_reviewed',
+        'The stored X user ID does not match the privacy-reviewed target',
+      );
     }
     const reader = c.get('interactionWatchReadAdapter')
       ?? buildInteractionWatchReadAdapter(c.env);

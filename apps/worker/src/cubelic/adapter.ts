@@ -111,6 +111,22 @@ function interactionWatchReadClient(env: Env['Bindings']): {
   };
 }
 
+async function assertApplicationOnlyCredential(client: XClient): Promise<void> {
+  try {
+    await client.getMe();
+  } catch (error) {
+    if (error instanceof XApiError && error.status === 403) return;
+    throw new PublicationPolicyError(
+      'interaction_watch_credential_unverified',
+      'The X read credential could not be verified as application-only',
+    );
+  }
+  throw new PublicationPolicyError(
+    'interaction_watch_user_context_forbidden',
+    'X User Context credentials are forbidden for interaction watches',
+  );
+}
+
 export function buildInteractionWatchReadAdapter(
   env: Env['Bindings'],
 ): XInteractionWatchReadAdapter {
@@ -158,6 +174,7 @@ export function buildInteractionWatchReadAdapter(
   return {
     async verifyTargetUsername(username) {
       const { accountId, client } = interactionWatchReadClient(env);
+      await assertApplicationOnlyCredential(client);
       const user = await client.getUserByUsername(username);
       await incrementApiUsage(env.DB, accountId, 'get_user_by_username');
       if (user.username.toLowerCase() !== username.toLowerCase()) {
@@ -173,6 +190,7 @@ export function buildInteractionWatchReadAdapter(
     },
     async discoverOriginalPosts({ registration, sincePostId }) {
       const { accountId, client } = interactionWatchReadClient(env);
+      await assertApplicationOnlyCredential(client);
       const response = await client.getUserTweets(
         registration.targetUserId,
         10,

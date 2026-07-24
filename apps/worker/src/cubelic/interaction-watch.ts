@@ -1,16 +1,17 @@
-import type {
-  InteractionWatchRegistration,
-  InteractionCandidateId,
-  XInteractionWatchReadAdapter,
-  XOperatorId,
-  XPostId,
-  XUserId,
+import {
+  PublicationPolicyError,
+  type InteractionCandidateId,
+  type InteractionWatchRegistration,
+  type XInteractionWatchReadAdapter,
+  type XOperatorId,
+  type XPostId,
+  type XUserId,
 } from '@x-harness/content-os';
 import {
   appendCubelicAudit,
   createInteractionCandidate,
   listInteractionWatches,
-  markInteractionWatchPolled,
+  reserveInteractionWatchPoll,
   updateInteractionWatchCursor,
   type InteractionWatchRecord,
 } from '@x-harness/db';
@@ -19,7 +20,10 @@ import {
   buildInteractionWatchReadAdapter,
   isCubelicPublicationStopped,
 } from './adapter.js';
-import { isInteractionWatchEnabled } from './safety.js';
+import {
+  isInteractionWatchEnabled,
+  isInteractionWatchTargetApproved,
+} from './safety.js';
 
 const AUTOMATIC_POLL_INTERVAL_MS = 15 * 60_000;
 
@@ -33,6 +37,41 @@ export async function pollInteractionWatch(
   reader: XInteractionWatchReadAdapter,
   correlationId: string,
 ): Promise<{ discovered: number }> {
+  if (!isInteractionWatchTargetApproved(env, watch.targetUserId)) {
+    throw new PublicationPolicyError(
+      'interaction_watch_target_not_reviewed',
+      'The interaction-watch target does not match the privacy review',
+    );
+  }
+  const polledAt = new Date().toISOString();
+  const reserved = await reserveInteractionWatchPoll(
+    env.DB,
+    watch.watchId,
+    polledAt,
+    env.ENVIRONMENT === 'staging'
+      && env.X_INTERACTION_WATCH_SMOKE_MODE === 'true',
+    {
+      actor: 'system',
+      action: 'interaction_watch.poll_reservation_checked',
+      entityType: 'interaction_watch',
+      entityId: watch.watchId,
+      before: {
+        previouslyPolled: watch.lastPolledAt !== null,
+        priorDailyPollCount: watch.pollCount,
+      },
+      after: {
+        minimumIntervalMinutes: 15,
+        dailyLimit: 96,
+      },
+      correlationId,
+    },
+  );
+  if (!reserved) {
+    throw new PublicationPolicyError(
+      'interaction_watch_rate_limited',
+      'Interaction-watch polling is limited to once every 15 minutes and 96 times per UTC day',
+    );
+  }
   const registration: InteractionWatchRegistration = {
     watchId: watch.watchId as InteractionWatchRegistration['watchId'],
     targetUserId: watch.targetUserId as XUserId,
@@ -92,13 +131,12 @@ export async function pollInteractionWatch(
       },
     );
   }
-  const polledAt = new Date().toISOString();
-  await markInteractionWatchPolled(env.DB, watch.watchId, polledAt, {
+  await appendCubelicAudit(env.DB, {
     actor: 'system',
     action: 'interaction_watch.polled',
     entityType: 'interaction_watch',
     entityId: watch.watchId,
-    before: { previouslyPolled: watch.lastPolledAt !== null },
+    before: {},
     after: { polled: true, discovered },
     correlationId,
   });

@@ -139,7 +139,8 @@ write release.
    `X_INTERACTION_WATCH_RELEASE_APPROVED=false`, and
    `X_INTERACTION_WATCH_STAGING_SMOKE_VERIFIED=false`,
    `X_INTERACTION_WATCH_PRIVACY_REVIEW_APPROVED=false`, and an empty
-   `X_INTERACTION_WATCH_PRIVACY_REVIEW_ID` in committed configuration.
+   `X_INTERACTION_WATCH_PRIVACY_REVIEW_ID` and
+   `X_INTERACTION_WATCH_REVIEWED_TARGET_USER_ID` in committed configuration.
 3. For the dedicated staging smoke only, enable the watch flag and staging smoke
    mode on a fresh dedicated staging D1, disable every X-write capability,
    record the privacy-review ID, resume the D1 stop with a named operator,
@@ -152,4 +153,6 @@ write release.
    the recorded staging evidence, migration 029, an approved privacy-review ID,
    a dedicated application-only read Bearer Token supplied as the
    `X_INTERACTION_WATCH_BEARER_TOKEN` secret, and a named operator. Production
-   must keep smoke mode false and every X-write release disabled.
+   must keep smoke mode false and every X-write release disabled. Registration
+   and polling must prove the credential cannot authenticate `/2/users/me` and
+   the resolved target ID must equal `X_INTERACTION_WATCH_REVIEWED_TARGET_USER_ID`.
