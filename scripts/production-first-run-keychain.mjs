@@ -16,8 +16,14 @@ const environment = {
   ...process.env,
   PRODUCTION_WORKER_URL: process.env.PRODUCTION_WORKER_URL
     ?? 'https://api.cubelic-fan.com',
-  PRODUCTION_API_KEY: keychainSecret('CUBELIC Production API Key'),
-  PRODUCTION_HUMAN_APPROVAL_KEY: keychainSecret('CUBELIC Production Human Approval Key'),
+  PRODUCTION_API_KEY: keychainSecret(
+    process.env.PRODUCTION_STAFF_KEYCHAIN_SERVICE
+      ?? 'X Harness Production Staff API Key',
+  ),
+  PRODUCTION_HUMAN_APPROVAL_KEY: keychainSecret(
+    process.env.PRODUCTION_HUMAN_APPROVAL_KEYCHAIN_SERVICE
+      ?? 'X Harness Production Human Approval Key',
+  ),
 };
 
 runProductionFirstRun({
