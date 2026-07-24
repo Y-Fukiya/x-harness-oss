@@ -407,3 +407,103 @@ export interface HumanXInteractionResult {
 export interface XHumanInteractionAdapter {
   execute(input: HumanXInteractionInput): Promise<HumanXInteractionResult>;
 }
+
+declare const interactionWatchIdBrand: unique symbol;
+declare const interactionCandidateIdBrand: unique symbol;
+declare const interactionOperationIdBrand: unique symbol;
+declare const xApprovalIdBrand: unique symbol;
+declare const xOperatorIdBrand: unique symbol;
+declare const xUserIdBrand: unique symbol;
+declare const xPostIdBrand: unique symbol;
+
+/** Opaque identifiers prevent accidental watch/candidate/post ID substitution. */
+export type InteractionWatchId = string & {
+  readonly [interactionWatchIdBrand]: 'InteractionWatchId';
+};
+export type InteractionCandidateId = string & {
+  readonly [interactionCandidateIdBrand]: 'InteractionCandidateId';
+};
+export type InteractionOperationId = string & {
+  readonly [interactionOperationIdBrand]: 'InteractionOperationId';
+};
+export type XApprovalId = string & {
+  readonly [xApprovalIdBrand]: 'XApprovalId';
+};
+export type XOperatorId = string & {
+  readonly [xOperatorIdBrand]: 'XOperatorId';
+};
+export type XUserId = string & {
+  readonly [xUserIdBrand]: 'XUserId';
+};
+export type XPostId = string & {
+  readonly [xPostIdBrand]: 'XPostId';
+};
+
+export interface InteractionWatchRegistration {
+  watchId: InteractionWatchId;
+  targetUserId: XUserId;
+  verifiedUsername: string;
+  verifiedAt: string;
+  registeredBy: XOperatorId;
+}
+
+export interface InteractionWatchDiscoveryInput {
+  registration: InteractionWatchRegistration;
+  sincePostId: XPostId | null;
+}
+
+export interface InteractionWatchCandidate {
+  candidateId: InteractionCandidateId;
+  watchId: InteractionWatchId;
+  postId: XPostId;
+  authorId: XUserId;
+  createdAt: string;
+}
+
+export interface InteractionWatchHumanAuthorization {
+  kind: 'human_individual';
+  approvalId: XApprovalId;
+  operatorId: XOperatorId;
+  approvedBy: XOperatorId;
+  approvedAt: string;
+}
+
+export interface ApprovedLikeAndRepostInput {
+  kind: 'like_and_repost';
+  operationId: InteractionOperationId;
+  candidateId: InteractionCandidateId;
+  targetPostId: XPostId;
+  approvalId: XApprovalId;
+  approvedAt: string;
+  authorization: InteractionWatchHumanAuthorization;
+}
+
+export type ApprovedLikeAndRepostResult =
+  | {
+      status: 'completed';
+      idempotentReplay?: boolean;
+    }
+  | {
+      status: 'outcome_unknown';
+      retryAllowed: false;
+    };
+
+/**
+ * Future-milestone read-only contract. A poller receives only this interface
+ * and therefore cannot publish, approve, Like, or Repost.
+ */
+export interface XInteractionWatchReadAdapter {
+  discoverOriginalPosts(
+    input: InteractionWatchDiscoveryInput,
+  ): Promise<readonly InteractionWatchCandidate[]>;
+}
+
+/**
+ * Future-milestone delivery contract only. Phase 1 must not provide a runtime
+ * implementation, routes, scheduled polling, persistence, or X delivery.
+ */
+export interface XInteractionWatchPublishingAdapter extends XPublishingAdapter {
+  executeApprovedLikeAndRepost(
+    input: ApprovedLikeAndRepostInput,
+  ): Promise<ApprovedLikeAndRepostResult>;
+}
