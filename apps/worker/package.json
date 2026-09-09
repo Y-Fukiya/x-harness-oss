@@ -12,7 +12,7 @@
     "@x-harness/db": "workspace:*",
     "@x-harness/shared": "workspace:*",
     "@x-harness/x-sdk": "workspace:*",
-    "hono": "^4.6.0"
+    "hono": "^4.13.5"
   },
   "devDependencies": {
     "typescript": "^5.9.3",
