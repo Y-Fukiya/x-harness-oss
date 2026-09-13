@@ -1,0 +1,23 @@
+title = "x-harness-oss gitleaks config"
+
+[allowlist]
+  description = "Test fixtures contain intentional dummy credentials used only in test harnesses"
+
+  # Historical commits where test-only dummy credentials were introduced.
+  # These values are sequential hex digits / human-readable placeholders —
+  # not real secrets — but they match the generic-api-key entropy heuristic.
+  commits = [
+    "eb9f330b64f6c0e5020be25aeae7e262ee899432",
+    "dedba8e888c0e5958906abe72854054b1b021b91",
+    "08fd0334a9f6a782a713b95ebd8dc611a0533ec9",
+  ]
+
+  # Suppress findings in any test or integration-test file.
+  paths = [
+    '''.*\.test\.ts$''',
+    '''.*\.test\.mjs$''',
+    '''.*\.test\.js$''',
+    '''.*\.integration\.test\.ts$''',
+    '''.*\.spec\.ts$''',
+    '''.*\.spec\.js$''',
+  ]
